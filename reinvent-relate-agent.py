@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["strands-agents[openai]==1.64.0", "openai==3.49.0", "relate-db==1.0.0"]
+# dependencies = ["strands-agents[openai]==1.64.0", "openai==3.49.0", "relate-db==1.2.0"]
 # ///
 """An AWS re:Invent 2026 guide: a Strands agent with tools that query a Relate graph.
 
@@ -16,19 +16,9 @@ The official AWS catalog is the authority, so check times there before you go.
 import difflib
 import json
 import os
-import re
-import shutil
-import subprocess
 import sys
-import tempfile
-import time
-import unicodedata
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date
-from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlencode, urljoin
-from urllib.request import urlopen
 
 if not os.environ.get("OPENAI_API_KEY"):
     sys.exit("OPENAI_API_KEY is not set. Run: export OPENAI_API_KEY=sk-...")
@@ -36,154 +26,13 @@ if not os.environ.get("OPENAI_API_KEY"):
 import relate
 from openai import OpenAI
 
-DATABASE = Path(__file__).with_name("reinvent-2026.rl")
-MIRROR = "https://ri26.awsclassroom.kr/"
-CATALOG = "https://registration.awsevents.com/flow/awsevents/reinvent2026/eventcatalog/page/eventcatalog"
-EMBED_MODEL = "text-embedding-3-small"
+import reinvent_graph as rg  # noqa: E402  The shared graph build and hybrid search, also used by planner.py.
+
+DATABASE = rg.DATABASE
+EMBED_MODEL = rg.EMBED_MODEL
 openai = OpenAI()
-
-
-def fold(text: str) -> str:
-    """Lowercase text without accents: "Gołąb" becomes "golab"."""
-    text = unicodedata.normalize("NFKD", text.lower().translate(str.maketrans({"ł": "l", "ø": "o", "đ": "d", "ß": "ss", "æ": "ae"})))
-    return "".join(c for c in text if not unicodedata.combining(c))
-
-
-# --- The build (one time) --------------------------------------------------------------------
-
-
-class ModuleScripts(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.sources = []
-
-    def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
-        if tag == "script" and attrs.get("type") == "module" and attrs.get("src"):
-            self.sources.append(attrs["src"])
-
-
-def download(url: str) -> str:
-    with urlopen(url, timeout=30) as response:
-        return response.read().decode("utf-8")
-
-
-def fetch_sessions() -> list[dict]:
-    """The session array from the mirror's JS bundle, decoded without running any JS."""
-    page = ModuleScripts()
-    page.feed(download(MIRROR))
-    if len(page.sources) != 1:
-        raise ValueError("Expected one module bundle on the mirror page")
-    bundle = download(urljoin(MIRROR, page.sources[0]))
-    match = re.search(r'JSON\.parse\(`(\[\{"id":(?:\\.|[^`\\])*)`\)', bundle, re.S)
-    if not match:
-        raise ValueError("Could not find the session array in the mirror bundle")
-    escapes = {"\\": "\\", "`": "`", "$": "$", "n": "\n", "r": "\r", "t": "\t"}
-    sessions = json.loads(re.sub(r"\\(.)", lambda m: escapes[m[1]], match[1]))
-    if len(sessions) < 1000 or len({s["id"] for s in sessions}) != len(sessions):
-        raise ValueError("Unexpected catalog size or duplicate session IDs")
-    return sessions
-
-
-def session_text(s: dict) -> str:
-    speakers = [f"{p['name']} ({p['company']})" if p.get("company") else p["name"] for p in s.get("speakers", []) if p.get("name")]
-    return "\n".join([
-        f"{s['code']}: {s['title'].strip()}", s.get("type") or "", s.get("abstract") or "",
-        "Topics: " + ", ".join(s.get("topics", [])), "Services: " + ", ".join(s.get("services", [])),
-        "Speakers: " + ", ".join(speakers),
-    ])
-
-
-def embed_all(texts: list[str]) -> list[list[float]]:
-    """Embed every text in a few large requests, in parallel. About 2,700 sessions take seconds."""
-    batches = [texts[i:i + 500] for i in range(0, len(texts), 500)]
-    with ThreadPoolExecutor(max_workers=len(batches)) as pool:
-        results = pool.map(lambda b: openai.embeddings.create(model=EMBED_MODEL, input=b).data, batches)
-    return [d.embedding for batch in results for d in batch]
-
-
-def load(path: Path, sessions: list[dict], embeddings: list[list[float]]) -> None:
-    db = relate.connect(str(path))
-    try:
-        for label, key in [("Session", "id"), ("Venue", "name"), ("Topic", "name"), ("Service", "name"), ("Speaker", "key")]:
-            db.execute(f"CREATE CONSTRAINT FOR (n:{label}) REQUIRE n.{key} IS UNIQUE")
-        rows = [{
-            "id": s["id"], "code": s["code"], "title": s["title"].strip(), "abstract": s.get("abstract") or "",
-            "format": s.get("type") or "", "level": s.get("level") or "", "text": session_text(s), "embedding": e,
-            "url": CATALOG + "?" + urlencode({"search": s["code"]}),
-        } for s, e in zip(sessions, embeddings)]
-        for i in range(0, len(rows), 500):  # Relate caps one commit at 64 MB, so store the embeddings in batches.
-            db.execute("""
-            UNWIND $rows AS row
-            CREATE (s:Session {id: row.id, code: row.code, title: row.title, abstract: row.abstract,
-                               format: row.format, level: row.level, url: row.url})
-            CREATE (:SessionChunk {text: row.text, embedding: row.embedding})-[:FROM_DOCUMENT]->(s)
-            """, {"rows": rows[i:i + 500]})
-        slots = []
-        for s in sessions:
-            for i, sl in enumerate(s.get("slots", [])):
-                day = date.fromisoformat(sl["date"])
-                slots.append({**sl, "id": f"{s['id']}:{i}", "session": s["id"], "day": day.strftime("%a"),
-                              "display": f"{day:%a} {day.day} {day:%b}, {sl['start']}–{sl['end']} PT"})
-        db.execute("""
-            UNWIND $rows AS row
-            MATCH (s:Session {id: row.session})
-            MERGE (v:Venue {name: row.venue})
-            CREATE (s)-[:HAS_SLOT]->(:Slot {id: row.id, date: row.date, day: row.day, start: row.start, end: row.end,
-                                            displayTime: row.display, room: row.room})-[:AT_VENUE]->(v)
-            """, {"rows": slots})
-        for label, rel, field in [("Topic", "HAS_TOPIC", "topics"), ("Service", "MENTIONS_SERVICE", "services")]:
-            db.execute(f"""
-                UNWIND $rows AS row
-                MATCH (s:Session {{id: row.id}})
-                MERGE (n:{label} {{name: row.name}})
-                MERGE (s)-[:{rel}]->(n)
-                """, {"rows": [{"id": s["id"], "name": v} for s in sessions for v in s.get(field, [])]})
-        db.execute("""
-            UNWIND $rows AS row
-            MATCH (s:Session {id: row.id})
-            MERGE (p:Speaker {key: row.key})
-            SET p.name = row.name, p.company = row.company, p.nameFolded = row.folded
-            MERGE (p)-[:PRESENTS]->(s)
-            """, {"rows": [{"id": s["id"], "name": p["name"], "company": p.get("company") or "", "folded": fold(p["name"]),
-                            "key": json.dumps([p["name"], p.get("company") or ""])}
-                           for s in sessions for p in s.get("speakers", []) if p.get("name")]})
-        db.execute("""
-            CREATE VECTOR INDEX session_chunk_embeddings IF NOT EXISTS
-            FOR (c:SessionChunk) ON c.embedding
-            OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}
-            """)
-        counts = db.execute("""
-            MATCH (s:Session) WITH count(s) AS sessions
-            MATCH (sl:Slot) WITH sessions, count(sl) AS slots
-            MATCH (c:SessionChunk) WHERE c.embedding IS NOT NULL
-            RETURN sessions, slots, count(c) AS embedded
-            """).fetchall()
-        print(f"Loaded: {counts[0]}")
-    finally:
-        db.close()
-
-
-def build() -> None:
-    started = time.time()
-    sessions = fetch_sessions()
-    print(f"Fetched {len(sessions)} sessions from {MIRROR} ({time.time() - started:.1f}s)")
-    embeddings = embed_all([session_text(s) for s in sessions])
-    print(f"Embedded {len(embeddings)} sessions with {EMBED_MODEL} ({time.time() - started:.1f}s)")
-    with tempfile.TemporaryDirectory() as tmp:
-        store = Path(tmp) / "store"
-        load(store, sessions, embeddings)
-        # A .rl file keeps the space of files it no longer needs, like the load's write-ahead log,
-        # so load into a directory store and `relate clone` it into a compact .rl when the CLI is here.
-        if cli := shutil.which("relate"):
-            bundle = Path(tmp) / DATABASE.name
-            subprocess.run([cli, "clone", str(store), str(bundle)], check=True, stdout=subprocess.DEVNULL)
-            os.replace(bundle, DATABASE)
-        else:
-            print("No relate CLI found, so writing the .rl directly (larger). See https://relatedb.ai/")
-            DATABASE.unlink(missing_ok=True)
-            load(DATABASE, sessions, embeddings)
-    print(f"Wrote {DATABASE.name} ({DATABASE.stat().st_size / 1e6:.1f} MB) in {time.time() - started:.1f}s")
+fold = rg.fold
+build = lambda: rg.build(openai)  # noqa: E731
 
 
 if sys.argv[1:] == ["build"]:
@@ -193,19 +42,13 @@ if sys.argv[1:] == ["build"]:
 if not DATABASE.exists():
     sys.exit(f"{DATABASE.name} not found. Run once: uv run {Path(__file__).name} build")
 
-# --- The graph -------------------------------------------------------------------------------
-# A Relate connection only works on the thread that opened it, and Strands runs tools on
-# worker threads, so one dedicated thread opens the database and runs every query.
+# --- The graph (opened read-only; see reinvent_graph.Graph) ------------------------------------
 
 from strands import Agent, tool  # noqa: E402
 from strands.models.openai import OpenAIModel  # noqa: E402
 
-db_thread = ThreadPoolExecutor(max_workers=1)
-db = db_thread.submit(relate.connect, str(DATABASE), read_only=True).result()
-
-
-def run(cypher: str, **params) -> list[dict]:
-    return db_thread.submit(lambda: [row.data() for row in db.execute(cypher, params)]).result()
+graph = rg.Graph(on_query=(lambda c, p, n, t: print("   [cypher]", {k: v for k, v in p.items() if k != "embedding"}, n, "rows")) if os.environ.get("DEBUG_CYPHER") else None)
+run = graph.run
 
 
 def to_json(value) -> str:
@@ -261,17 +104,14 @@ def find_sessions(query: str, keywords: list[str] | None = None, date: str = "",
         before: Start before this time, 24-hour "HH:MM" Pacific, or "" for any.
         limit: How many sessions to return, at most 40.
     """
-    embedding = openai.embeddings.create(model=EMBED_MODEL, input=query).data[0].embedding
-    # Exact cosine over the filtered sessions: a few thousand vectors take tens of milliseconds, and
-    # unlike a top-k from the vector index, it can't drop matches that the filters would keep.
-    return to_json(run(FILTERS + """
-        MATCH (c:SessionChunk)-[:FROM_DOCUMENT]->(s)
-        WITH s, sl, v, vector.similarity.cosine(c.embedding, $embedding) AS score,
-             [k IN $keywords WHERE toLower(c.text) CONTAINS k] AS hits
-        WITH s, sl, v, {score: round(score, 3), keywordHits: hits} AS extra, score + CASE WHEN size(hits) > 0 THEN 1 ELSE 0 END AS rank
-        ORDER BY rank DESC LIMIT $limit
-        """ + DETAILS + " ORDER BY extra.keywordHits = [] , extra.score DESC", embedding=embedding,
-        keywords=[k.lower() for k in keywords or [] if k.strip()], limit=max(1, min(limit, 40)), **filters(date, venue, format, after, before)))
+    embed = lambda text: openai.embeddings.create(model=EMBED_MODEL, input=text).data[0].embedding  # noqa: E731
+    rows = rg.find_sessions(graph, embed, query, keywords, date, venue, "", after, before, limit)
+    if format:
+        rows = [r for r in rows if format.lower() in r["format"].lower()]
+    if not keywords:
+        return to_json(rows)
+    return to_json({"containKeywords": [r for r in rows if r["matchedKeywords"]],
+                    "similarOnly (don't say these are about the keywords)": [r for r in rows if not r["matchedKeywords"]]})
 
 
 @tool
@@ -329,8 +169,10 @@ def sessions_by_speaker(name: str) -> str:
 model = OpenAIModel(model_id=os.environ.get("OPENAI_MODEL", "gpt-5.4-mini"))
 
 CYPHER_WRITER_PROMPT = """Write one read-only Cypher query that answers the question, for this graph:
-(:Speaker {name, company})-[:PRESENTS]->(:Session {code, title, abstract, format, level, url})
-(:Session)-[:HAS_SLOT]->(:Slot {date, day, start, end, displayTime, room})-[:AT_VENUE]->(:Venue {name})
+(:Speaker {name, company})-[:PRESENTS]->(:Session {code, title, abstract, format, kind, level, url})
+(:Session)-[:HAS_SLOT]->(:Slot {date, day, start, end, displayTime, room, place})-[:AT_VENUE]->(:Venue {name})
+(:Session)-[:REPEAT_OF]->(:Series {code, title})   (other runs of a session share its Series)
+(:Venue)-[:TRAVEL {minutes}]->(:Venue)   (estimated travel time between venues)
 (:Session)-[:HAS_TOPIC]->(:Topic {name})
 (:Session)-[:MENTIONS_SERVICE]->(:Service {name})
 Slot.date is a 'YYYY-MM-DD' string, Slot.day is like 'Wed', and start and end are 'HH:MM' Pacific strings,
@@ -397,5 +239,5 @@ if __name__ == "__main__":
     except (EOFError, KeyboardInterrupt):
         pass
     finally:
-        db_thread.submit(db.close).result()  # Close the database on its own thread.
+        graph.close()
     print()
