@@ -9,6 +9,7 @@ A demo for **Build an Expert Agent with AWS Strands Agents and Neo4j Relate**. A
 | `reinvent_graph.py` | The shared graph: the one-time build, hybrid search, and the read-only graph |
 | `web/index.html` | The page: chat, tool and Cypher log, agenda timeline, Strip map, venue schematics, "why this session" graph |
 | `test_demo.py` | Runs the two booth turns through the agent and checks the agenda it saves |
+| `neo4j-events.json` | Other Neo4j events, in the catalog's shape: Neo4j After Dark (Tue 1 Dec, 7–10 pm, The Barbershop at The Cosmopolitan). The build adds them to the graph. |
 | `booth-theater.csv` | The Neo4j booth theater talks (booth 732, Venetian Expo Hall B), from the draft booth schedule. The build adds them to the graph. |
 
 ## Run
@@ -48,7 +49,7 @@ The agent's choices can vary from run to run. `test_demo.py` checks what must ho
   - **Graph walks:**
     - `REPEAT_OF` finds other runs of the same session.
     - Shared `HAS_TOPIC` and `MENTIONS_SERVICE` neighbors pair sessions.
-    - `TRAVEL` edges between venues give the travel minutes.
+    - `TRAVEL` edges between venues give the travel minutes. `venues_by_distance` walks them to answer "far from the Venetian" or "near MGM".
 - **The scheduler** (`plan_agenda`) is plain Python, not the LLM.
   - **Candidates:** for each slot, it takes the agent's candidates and their other runs that day. It ranks them by a hybrid search for the slot's subject, so the same request plans the same day.
   - **Choosing:** it tries every combination, rejects overlaps, blocked time, and gaps too short to travel, and always saves the best valid agenda. If none of the agent's picks fit a slot, it leaves the slot empty; it doesn't fill it with something off-subject.
@@ -70,5 +71,5 @@ The agent's choices can vary from run to run. `test_demo.py` checks what must ho
 
 - The catalog comes from a public community mirror (https://ri26.awsclassroom.kr/). The official AWS catalog is the authority.
 - The Neo4j booth theater talks aren't in the AWS catalog. They come from `booth-theater.csv`, a draft schedule: edit it and rerun `uv run planner.py build`. Each title gets a code (NEO01, NEO02...), and its repeats get -R, -R1..., so they link to each other like the catalog's repeats.
-- Travel minutes are planning estimates in `reinvent_graph.py` (`TRAVEL_MINUTES`), not AWS guidance. Edit them and rebuild.
+- Travel minutes are planning estimates in `reinvent_graph.py` (`TRAVEL_MINUTES`), not AWS guidance. Edit them and rebuild. The Cosmopolitan isn't an AWS venue: it's on the map for Neo4j After Dark.
 - The Strip map is stylized, and each venue's inside view is a schematic built from the catalog's room names, not a floor plan.

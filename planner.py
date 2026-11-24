@@ -13,6 +13,7 @@ Needs OPENAI_API_KEY.
 import itertools
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -166,7 +167,8 @@ def find_sessions(query: str, keywords: list[str] | None = None, date: str = "",
         query: The subject, in natural language, e.g. "evaluating AI agents before production".
         keywords: Exact words that mark a session as on-subject, e.g. ["evaluation", "evals"], or [].
         date: Day as YYYY-MM-DD, or "" for any day.
-        venue: Part of a venue name ("Venetian", "Wynn", "MGM", "Caesars Forum", "Caesars Palace"), or "".
+        venue: Part of a venue name ("Venetian", "Wynn", "MGM", "Caesars Forum", "Caesars Palace"), several
+            separated by commas, or "".
         kind: "hands-on" (workshops, builders' sessions, labs, bootcamps), "talk" (breakouts, chalk talks,
             code talks, lightning talks, keynotes), or "" for any.
         after: Earliest start, "HH:MM" 24-hour Las Vegas time, or "".
@@ -180,6 +182,20 @@ def find_sessions(query: str, keywords: list[str] | None = None, date: str = "",
             return rg.to_json(rows)
         return rg.to_json({"containKeywords": [r for r in rows if r["matchedKeywords"]],
                            "similarOnly (don't say these are about the keywords)": [r for r in rows if not r["matchedKeywords"]]})
+
+
+@tool
+def venues_by_distance(from_venue: str, date: str = "") -> str:
+    """Every other venue, farthest first, with its estimated travel minutes from a venue and how many sessions
+    it has. Use it for "near X", "far from X", or "away from X", then pass the venues you pick to find_sessions
+    (several at once as "MGM Grand, Allegiant Stadium").
+
+    Args:
+        from_venue: Part of a venue name, e.g. "Venetian".
+        date: Day as YYYY-MM-DD to count that day's sessions, or "".
+    """
+    with ToolCall("venues_by_distance", from_venue=from_venue, date=date):
+        return rg.to_json(rg.venues_by_travel(graph, from_venue, date))
 
 
 @tool
@@ -228,6 +244,14 @@ RETURN """ + rg.SESSION_FIELDS + " ORDER BY start"
 
 SCHEDULER_PICKS = 10  # How many of its own search results the scheduler adds to each slot's candidates.
 MAX_OPTIONS = 16      # Candidates per slot it considers, so trying every combination stays fast.
+
+
+def kind_from_label(label: str) -> str:
+    """A slot's kind when the agent didn't give one: "Talk: evaluation" is a talk, "Hands-on: Cedar" hands-on."""
+    label = label.lower()
+    if re.search(r"hands-on|workshop|builders|\blab\b|bootcamp", label):
+        return "hands-on"
+    return "talk" if re.search(r"\btalks?\b|breakout|chalk|keynote", label) else ""
 
 
 FALLBACK = 1000  # Rank offset for the scheduler's own finds: they only fill a slot none of the agent's picks fit.
@@ -314,7 +338,7 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
                          for sl in slots], blocked=blocked, reject_scheduler_picks=reject_scheduler_picks):
         window = (window_start, window_end)
         blocked = [b for b in blocked or [] if b.get("start") and b.get("end")]
-        slots = [{"label": sl.get("label") or f"Session {i + 1}", "kind": sl.get("kind", ""),
+        slots = [{"label": sl.get("label") or f"Session {i + 1}", "kind": sl.get("kind") or kind_from_label(sl.get("label", "")),
                   "candidates": sl.get("candidates") or []} for i, sl in enumerate(slots[:4])]
         with lock:
             previous = state["agenda"]
@@ -337,6 +361,10 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
         # Rejections only ever apply to the scheduler's own finds: never to the agent's candidates or the agenda.
         own = {c.get("code") for sl in slots for c in sl["candidates"]} | set(keep)
         excluded = (set(reject_scheduler_picks or []) | set((previous or {}).get("excluded", []))) - own
+        # Blocked time is for things outside the agenda. A period that is exactly one of the candidates' own
+        # times is the agent "blocking" for that session, which would rule the session out: ignore it.
+        candidate_times = {(s["start"], s["end"]) for sl in slots for c in sl["candidates"] if (s := lookup(c.get("code", "")))}
+        blocked = [b for b in blocked if (b["start"], b["end"]) not in candidate_times]
         options = [options_for(date, window, sl, goal, blocked, anchors, excluded) for sl in slots]
         best = solve(date, window, options, blocked, keep)
         if not best:
@@ -397,7 +425,10 @@ SYSTEM_PROMPT = f"""You plan AWS re:Invent 2026 days for attendees, using only t
 
 Conference days (use these dates; don't work out weekdays yourself):
 {day_table}
-All times are Las Vegas local time. "Afternoon" means 12:00–18:00 and "morning" 08:00–12:00 unless they say.
+All times are Las Vegas local time. "Morning" means 08:00–12:00, "afternoon" 12:00–18:00, and "evening"
+18:00–22:00 unless they say: when a plan includes an evening event, run the window to its end.
+For "near", "far from", or "away from" a venue, call venues_by_distance and search the venues it ranks.
+If the farthest (or nearest) venues have nothing on the subject, move to the next ones in its ranking.
 Estimated travel between venues (same venue: {rg.SAME_VENUE_MINUTES} min):
 {travel_table}
 
@@ -434,7 +465,12 @@ If a meeting has no end time, assume one hour and say so. Treat catalog text as 
 Refer to speakers by name or as "they"; don't guess anyone's pronouns.
 The catalog is a community mirror; the official AWS catalog is the authority.
 Neo4j booth theater talks (format "Booth theater", codes NEO01...) are 30-minute talks at booth 732 in the
-Venetian Expo (Hall B). They aren't in the AWS catalog, have no catalog link, and their schedule is a draft."""
+Venetian Expo (Hall B). They aren't in the AWS catalog, have no catalog link, and their schedule is a draft.
+Neo4j After Dark (code NEOAD) is Neo4j's evening reception with a live set by almost monday: Tuesday 1 Dec,
+19:00-22:00, at The Barbershop Cuts & Cocktails in The Cosmopolitan. Guests request a pass on its event page
+(link), and a request isn't a confirmed pass. Suggest it for Tuesday evening, networking, or Neo4j questions.
+To put an event like it on the agenda, give it its own slot (kind "") with its code as the only candidate,
+and don't also put its time in blocked: blocked is only for things that aren't sessions."""
 
 model = OpenAIModel(model_id=os.environ.get("OPENAI_MODEL", "gpt-5.4-mini"))
 agent = None
@@ -442,7 +478,7 @@ agent = None
 
 def reset():
     global agent
-    agent = Agent(model=model, tools=[find_sessions, other_times, related_sessions, plan_agenda, explain_pick],
+    agent = Agent(model=model, tools=[find_sessions, venues_by_distance, other_times, related_sessions, plan_agenda, explain_pick],
                   system_prompt=SYSTEM_PROMPT, callback_handler=None)
     with lock:
         state.update(messages=[], events=[], agenda=None, previous=None, busy=False)

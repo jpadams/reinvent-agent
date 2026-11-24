@@ -98,7 +98,8 @@ def find_sessions(query: str, keywords: list[str] | None = None, date: str = "",
         query: The subject to search for, in natural language.
         keywords: Literal terms or acronyms (case-insensitive) that mark a session as on-subject, or [].
         date: Day as YYYY-MM-DD (see the day table in your instructions), or "" for any day.
-        venue: Part of a venue name, e.g. "Venetian", "Wynn", "MGM", "Caesars Forum", or "" for any.
+        venue: Part of a venue name, e.g. "Venetian", "Wynn", "MGM", "Caesars Forum", several separated
+            by commas, or "" for any.
         format: Part of a session format, e.g. "Breakout", "Chalk talk", "Workshop", "Builders", or "" for any.
         after: Earliest start time, 24-hour "HH:MM" Pacific, or "" for any.
         before: Start before this time, 24-hour "HH:MM" Pacific, or "" for any.
@@ -147,6 +148,19 @@ MATCH (sp:Speaker) WHERE all(w IN split($name, ' ') WHERE sp.nameFolded CONTAINS
 MATCH (sp)-[:PRESENTS]->(s:Session)-[:HAS_SLOT]->(sl:Slot)-[:AT_VENUE]->(v:Venue)
 WITH s, sl, v, sp.name + CASE sp.company WHEN '' THEN '' ELSE ' (' + sp.company + ')' END AS extra
 """ + DETAILS + " ORDER BY extra, sl.date, sl.start LIMIT 40"
+
+
+@tool
+def venues_by_distance(from_venue: str, date: str = "") -> str:
+    """Every other venue, farthest first, with its estimated travel minutes from a venue and how many sessions
+    it has. Use it for "near X", "far from X", or "away from X", then pass the venues you pick to find_sessions
+    (several at once as "MGM Grand, Allegiant Stadium").
+
+    Args:
+        from_venue: Part of a venue name, e.g. "Venetian".
+        date: Day as YYYY-MM-DD to count that day's sessions, or "".
+    """
+    return to_json(rg.venues_by_travel(graph, from_venue, date))
 
 
 @tool
@@ -206,13 +220,18 @@ def ask_reinvent_graph(question: str) -> str:
 # --- The agent -------------------------------------------------------------------------------
 
 day_table = "\n".join(f"  {date.fromisoformat(d['date']):%A %-d %B %Y} = {d['date']}" for d in DAYS)
+travel_table = "\n".join(f"  {a} ↔ {b}: {m} min" for (a, b), m in sorted(rg.travel_minutes(graph).items()) if a < b)
 agent = Agent(
     model=model,
-    tools=[find_sessions, list_sessions, sessions_by_speaker, ask_reinvent_graph],
+    tools=[find_sessions, venues_by_distance, list_sessions, sessions_by_speaker, ask_reinvent_graph],
     system_prompt=f"""You are a helpful guide to AWS re:Invent 2026 in Las Vegas. Answer using only the tools.
 
 Conference days (use these dates; don't work out weekdays yourself):
 {day_table}
+For "near", "far from", or "away from" a venue, call venues_by_distance and search the venues it ranks.
+If the farthest (or nearest) venues have nothing on the subject, move to the next ones in its ranking.
+Estimated travel between venues, walking or by shuttle (planning estimates, not AWS guidance):
+{travel_table}
 Venues: {", ".join(VENUES)}
 Formats: {", ".join(FORMATS)}
 
@@ -224,7 +243,9 @@ about the subject, and don't claim a semantic list is complete. Include each ses
 time, venue and room, speakers, and catalog link. The data comes from a community mirror of the catalog,
 so say the official catalog is the authority when times matter. Neo4j booth theater talks (format
 "Booth theater", codes NEO01...) are 30-minute talks at booth 732 in the Venetian Expo (Hall B); they
-aren't in the AWS catalog, have no catalog link, and their schedule is a draft. If the tools don't have
+aren't in the AWS catalog, have no catalog link, and their schedule is a draft. Neo4j After Dark (code NEOAD) is
+Neo4j's evening reception with a live set by almost monday: Tuesday 1 Dec, 19:00-22:00, at The Barbershop
+Cuts & Cocktails in The Cosmopolitan; guests request a pass on its event page, and a request isn't a pass. If the tools don't have
 the answer, say so. Refer to speakers by name or as "they"; don't guess anyone's pronouns.""",
 )
 

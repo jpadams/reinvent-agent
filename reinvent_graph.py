@@ -44,6 +44,8 @@ TALKS = {"Breakout session", "Chalk talk", "Code talk", "Lightning talk", "Keyno
 # Talks at the Neo4j booth theater, which aren't in the AWS catalog. The schedule is a draft.
 BOOTH_THEATER = Path(__file__).with_name("booth-theater.csv")
 BOOTH_ROOM = "Venetian | Level 2 | Hall B | Expo | Booth 732"
+# Other Neo4j events at re:Invent (such as the Neo4j After Dark reception), in the catalog's shape.
+NEO4J_EVENTS = Path(__file__).with_name("neo4j-events.json")
 
 # Campus locations (approximate) for the map. Places like "Flight Club (located in The Venetian)"
 # belong to the campus they name.
@@ -53,6 +55,7 @@ VENUES = {
     "Caesars Forum": (36.1183, -115.1675),
     "Caesars Palace": (36.1162, -115.1745),
     "MGM Grand": (36.1025, -115.1698),
+    "The Cosmopolitan": (36.1097, -115.1741),  # Not an AWS venue: Neo4j After Dark is here.
     "Allegiant Stadium": (36.0909, -115.1833),
 }
 # Estimated door-to-door minutes between campuses, walking or by conference shuttle, including
@@ -70,6 +73,12 @@ TRAVEL_MINUTES = {
     ("MGM Grand", "Caesars Forum"): 35,
     ("MGM Grand", "Venetian"): 40,
     ("MGM Grand", "Wynn/Encore"): 45,
+    ("The Cosmopolitan", "Caesars Palace"): 20,
+    ("The Cosmopolitan", "MGM Grand"): 25,
+    ("The Cosmopolitan", "Caesars Forum"): 25,
+    ("The Cosmopolitan", "Venetian"): 30,
+    ("The Cosmopolitan", "Wynn/Encore"): 35,
+    ("The Cosmopolitan", "Allegiant Stadium"): 30,
     ("Allegiant Stadium", "MGM Grand"): 30,
     ("Allegiant Stadium", "Caesars Palace"): 35,
     ("Allegiant Stadium", "Caesars Forum"): 40,
@@ -261,8 +270,8 @@ def load(path: Path, sessions: list[dict], embeddings: list[list[float]]) -> dic
 def build(client) -> None:
     started = time.time()
     sessions = fetch_sessions()
-    booth = booth_sessions()
-    print(f"Fetched {len(sessions)} sessions from {MIRROR}, plus {len(booth)} Neo4j booth theater talks "
+    booth = booth_sessions() + json.loads(NEO4J_EVENTS.read_text(encoding="utf-8"))
+    print(f"Fetched {len(sessions)} sessions from {MIRROR}, plus {len(booth)} Neo4j booth talks and events "
           f"({time.time() - started:.1f}s)")
     sessions += booth
     embeddings = embed_all(client, [session_text(s) for s in sessions])
@@ -369,7 +378,7 @@ WITH c, sum(1.0 / (60 + rank)) AS rrf,
 ORDER BY rrf DESC LIMIT $limit
 MATCH (c)-[:FROM_DOCUMENT]->(s:Session)-[:HAS_SLOT]->(sl:Slot)-[:AT_VENUE]->(v:Venue)
 RETURN """ + SESSION_FIELDS + """, substring(s.abstract, 0, 240) AS summary,
-       [w IN $phrases WHERE toLower(c.text) CONTAINS w] AS matchedKeywords, vectorRank, fulltextRank
+       [w IN $phrases WHERE all(t IN split(w, ' ') WHERE toLower(c.text) CONTAINS t)] AS matchedKeywords, vectorRank, fulltextRank
 ORDER BY rrf DESC
 """
 
@@ -384,7 +393,8 @@ def search_words(query: str, keywords: list[str] | None) -> str:
 
 def find_sessions(graph: Graph, embed, query: str, keywords: list[str] | None = None, date: str = "",
                   venue: str = "", kind: str = "", after: str = "", before: str = "", limit: int = 15) -> list[dict]:
-    venues = [v for v in ALL_VENUES if venue.lower() in v.lower()] if venue else ALL_VENUES
+    wanted = [w.strip().lower() for w in venue.split(",") if w.strip()]  # One venue, or several: "MGM, Allegiant"
+    venues = [v for v in ALL_VENUES if any(w in v.lower() for w in wanted)] if wanted else ALL_VENUES
     kinds = [kind] if kind in ("hands-on", "talk", "other") else ["hands-on", "talk", "other"]
     phrases = [k.lower().strip() for k in keywords or [] if k.strip()]
     return graph.run(HYBRID_SEARCH, embedding=embed(query), words=search_words(query, keywords), phrases=phrases,
@@ -399,3 +409,18 @@ def conference_days(graph: Graph) -> list[dict]:
 def travel_minutes(graph: Graph) -> dict[tuple[str, str], int]:
     rows = graph.run("MATCH (a:Venue)-[t:TRAVEL]->(b:Venue) RETURN a.name AS a, b.name AS b, t.minutes AS m")
     return {(r["a"], r["b"]): r["m"] for r in rows}
+
+
+VENUES_BY_TRAVEL = """
+MATCH (a:Venue)-[t:TRAVEL]->(b:Venue)
+WHERE toLower(a.name) CONTAINS toLower($venue) AND a <> b
+RETURN b.name AS venue, t.minutes AS minutes,
+       COUNT { (b)<-[:AT_VENUE]-(sl:Slot) WHERE $date = '' OR sl.date = $date } AS sessions
+ORDER BY minutes DESC, venue
+"""
+
+
+def venues_by_travel(graph: Graph, venue: str, date: str = "") -> list[dict]:
+    """Every other venue with its estimated travel minutes from this one (farthest first), from the graph's
+    TRAVEL edges, and how many sessions it has (that day, if given)."""
+    return graph.run(VENUES_BY_TRAVEL, venue=venue, date=date)

@@ -71,6 +71,7 @@ form button:disabled { opacity: .5; }
 .badge { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .6px; border-radius: 4px; padding: 1px 5px; margin-right: 6px; vertical-align: 1px; }
 .badge.hands-on { background: var(--handson); color: #2b1a00; }
 .badge.talk { background: var(--talk); color: #1a0f3d; }
+.badge.other { background: var(--pin); color: #0b1020; }
 .badge.new { background: var(--ok); color: #052e14; }
 .badge.kept { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 .badge.booth { background: var(--accent); color: #062421; }
@@ -283,7 +284,7 @@ function renderAgenda() {
     const h = (mins(s.end) - mins(s.start)) * px;
     const fresh = isNew(s.code) && S.previous;
     html += `<div class="card ${s.kind} ${selected === s.code ? "sel" : ""} ${fresh && animate ? "new" : ""}" data-code="${esc(s.code)}" style="top:${y(s.start)}px;height:${h - 2}px">
-      <div class="t"><span class="badge ${s.kind}">${s.kind === "hands-on" ? "HANDS-ON" : "TALK"}</span>${fresh ? `<span class="badge new">NEW</span>` : (ch.kept || []).includes(s.code) && S.previous ? `<span class="badge kept">KEPT</span>` : ""}${s.fromScheduler ? `<span class="badge kept" title="The scheduler found this one itself">SCHEDULER PICK</span>` : ""}${s.format === "Booth theater" ? `<span class="badge booth" title="Neo4j booth theater, booth 732 (draft schedule)">NEO4J BOOTH</span>` : ""}${esc(s.code)} · ${esc(s.title)}${h < 60 ? ` <span class="m">· ${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)}</span>` : ""}</div>
+      <div class="t"><span class="badge ${s.kind}">${s.kind === "hands-on" ? "HANDS-ON" : s.kind === "talk" ? "TALK" : "EVENT"}</span>${fresh ? `<span class="badge new">NEW</span>` : (ch.kept || []).includes(s.code) && S.previous ? `<span class="badge kept">KEPT</span>` : ""}${s.fromScheduler ? `<span class="badge kept" title="The scheduler found this one itself">SCHEDULER PICK</span>` : ""}${s.code.startsWith("NEO") ? `<span class="badge booth" title="${s.format === "Booth theater" ? "Neo4j booth theater, booth 732 (draft schedule)" : "A Neo4j event, not in the AWS catalog"}">${s.format === "Booth theater" ? "NEO4J BOOTH" : "NEO4J EVENT"}</span>` : ""}${esc(s.code)} · ${esc(s.title)}${h < 60 ? ` <span class="m">· ${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)}</span>` : ""}</div>
       ${h < 60 ? "" : `<div class="m">${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)} · ${esc(roomShort(s.room))}</div>`}
       ${h > 95 ? `<div class="w">${esc(s.why)}</div>` : ""}
     </div>`;
@@ -333,7 +334,7 @@ function drawStrip() {
   svg += `<text x="${i15[1][0] - 4}" y="${i15[1][1] + 14}" fill="var(--muted)" font-size="10" text-anchor="end">I-15</text>`;
   for (const [name, lat] of cross) { const [x1, yy] = P(lat, -115.1880), [x2] = P(lat, -115.1610); svg += `<line x1="${x1}" y1="${yy}" x2="${x2}" y2="${yy}" stroke="var(--road)" stroke-width="2"/><text x="${x1}" y="${yy - 4}" fill="var(--muted)" font-size="10">${name}</text>`; }
   svg += `<polyline points="${blvd.map((p) => p.join(",")).join(" ")}" fill="none" stroke="#3b4b74" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>`;
-  svg += `<text transform="translate(${blvd[1][0] - 8},${(blvd[1][1] + blvd[2][1]) / 2}) rotate(-88)" fill="var(--muted)" font-size="10" text-anchor="middle">Las Vegas Blvd (the Strip)</text>`;
+  svg += `<text transform="translate(${(blvd[0][0] + blvd[1][0]) / 2 - 8},${(blvd[0][1] + blvd[1][1]) / 2}) rotate(-80)" fill="var(--muted)" font-size="10" text-anchor="middle">Las Vegas Blvd (the Strip)</text>`;
   // Route between agenda stops.
   for (let i = 1; i < items.length; i++) {
     const [x1, y1] = V[items[i - 1].venue] || [], [x2, y2] = V[items[i].venue] || [];
@@ -351,8 +352,14 @@ function drawStrip() {
     const r = stops.length ? 15 : 7;
     svg += `<g style="cursor:pointer" data-v="${esc(v.name)}"><circle cx="${x}" cy="${y}" r="${r}" fill="${stops.length ? "var(--accent)" : isPassed ? "transparent" : "var(--pin)"}" stroke="${isPassed ? "var(--muted)" : "none"}" stroke-dasharray="3 2" stroke-width="2"/>`;
     if (stops.length) svg += `<text x="${x}" y="${y + 5}" fill="#062421" font-size="13" font-weight="800" text-anchor="middle">${stops.join(",")}</text>`;
-    const left = v.name === "Caesars Palace" || v.name === "Allegiant Stadium";
-    svg += `<text x="${x + (left ? -r - 6 : r + 6)}" y="${y + 4}" fill="${stops.length ? "#fff" : "var(--text)"}" font-size="13" font-weight="${stops.length ? 700 : 500}" text-anchor="${left ? "end" : "start"}">${esc(v.name)}</text></g>`;
+    const left = ["Caesars Palace", "Allegiant Stadium", "The Cosmopolitan"].includes(v.name);
+    // Where to find Neo4j: the booth and the evening reception, always on the map. Venues labelled on the
+    // right get the marker on the same line; those on the left (more room below) on the line under.
+    const neo = NEO4J_PLACES.find((n) => n.venue === v.name);
+    const inline = neo && !left ? `<tspan fill="var(--ok)" font-size="11" font-weight="700">  ● ${esc(neo.label)}</tspan>` : "";
+    svg += `<text x="${x + (left ? -r - 6 : r + 6)}" y="${y + 4}" fill="${stops.length ? "#fff" : "var(--text)"}" font-size="13" font-weight="${stops.length ? 700 : 500}" text-anchor="${left ? "end" : "start"}">${esc(v.name)}${inline}</text>`;
+    if (neo && left) svg += `<text x="${x - r - 6}" y="${y + 18}" fill="var(--ok)" font-size="11" font-weight="700" text-anchor="end">● ${esc(neo.label)}</text>`;
+    svg += `</g>`;
   }
   svg += `<text x="${W - 8}" y="${H - 8}" fill="var(--muted)" font-size="10" text-anchor="end">N ↑ · stylized, not to scale</text></svg>`;
   $("map").innerHTML = svg;
@@ -361,6 +368,11 @@ function drawStrip() {
   $("mapNote").textContent = "Travel minutes are planning estimates stored as TRAVEL edges in the graph, not official AWS guidance.";
 }
 const roomCache = {};
+// Where to find Neo4j, marked on the Strip map.
+const NEO4J_PLACES = [
+  { venue: "Venetian", label: "Neo4j booth 732" },
+  { venue: "The Cosmopolitan", label: "Neo4j After Dark · Tue 7–10 pm" },
+];
 // Where to find us. Set the booth number before the show.
 const BOOTH = { venue: "Venetian", area: "Hall B", label: "Neo4j · Booth 732" };
 async function drawVenue(name) {
@@ -426,7 +438,7 @@ async function select(code) {
   const g = await api(`/api/why?code=${encodeURIComponent(code)}`);
   const sentence = s ? s.why : p ? `Passed over: ${p.reason}` : "";
   $("whyBody").innerHTML = `<div class="ttl">${esc(code)} · ${esc(it?.title || g.title)}</div><div class="sent">${esc(sentence)}</div>
-    <div style="font-size:12px;color:var(--muted)">${esc((it?.speakers || []).join(", "))} · ${it?.link ? `<a href="${esc(it.link)}" target="_blank" rel="noopener">catalog</a>` : "Neo4j booth 732 · not in the AWS catalog"}</div>
+    <div style="font-size:12px;color:var(--muted)">${esc((it?.speakers || []).join(", "))} · ${it?.link ? `<a href="${esc(it.link)}" target="_blank" rel="noopener">${it.link.includes("awsevents.com") ? "catalog" : "event page"}</a>` : "Neo4j booth 732 · not in the AWS catalog"}</div>
     <div id="whyGraph">${whySvg(g)}</div>`;
 }
 function whySvg(g) {
