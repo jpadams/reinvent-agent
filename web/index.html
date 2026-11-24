@@ -58,7 +58,10 @@ form button:disabled { opacity: .5; }
 /* Agenda */
 #agendaHead { padding: 0 14px 6px; color: var(--muted); font-size: 13px; min-height: 22px; }
 #agendaHead b { color: var(--text); }
-#timeline { position: relative; flex: 1; margin: 10px 14px 22px 58px; min-height: 0; }
+/* The timeline and the passed-over list scroll together: a long day, or short sessions that need a taller
+   scale to stay readable, can run past the panel. */
+#agendaScroll { flex: 1; min-height: 0; overflow-y: auto; }
+#timeline { position: relative; margin: 10px 14px 22px 58px; }
 .hour { position: absolute; left: -50px; right: 0; border-top: 1px dashed var(--line); font-size: 11px; color: var(--muted); }
 .hour span { position: absolute; top: -8px; left: 0; width: 42px; }
 .card, .block, .ghost { position: absolute; left: 0; right: 0; border-radius: 10px; padding: 6px 10px; overflow: hidden; }
@@ -68,6 +71,7 @@ form button:disabled { opacity: .5; }
 .card .t { font-weight: 600; font-size: 14px; line-height: 1.25; }
 .card .m { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .card .w { font-size: 12px; margin-top: 4px; color: #cfd7ea; }
+.card.short .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .badge { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .6px; border-radius: 4px; padding: 1px 5px; margin-right: 6px; vertical-align: 1px; }
 .badge.hands-on { background: var(--handson); color: #2b1a00; }
 .badge.talk { background: var(--talk); color: #1a0f3d; }
@@ -152,8 +156,10 @@ svg text { font-family: system-ui, -apple-system, sans-serif; }
   <section class="panel">
     <h2>Your agenda <span class="tag" id="agendaTag"></span></h2>
     <div id="agendaHead"></div>
-    <div id="timeline"><div id="empty">Your agenda appears here.</div></div>
-    <div id="passed"></div>
+    <div id="agendaScroll">
+      <div id="timeline"><div id="empty">Your agenda appears here.</div></div>
+      <div id="passed"></div>
+    </div>
   </section>
   <section class="panel">
     <h2>Where you'll be <span class="tag" id="mapTag"></span></h2>
@@ -262,7 +268,7 @@ function render() {
 function renderAgenda() {
   const a = S.agenda, tl = $("timeline");
   if (!a) {
-    tl.innerHTML = `<div id="empty">Your agenda appears here.</div>`; $("agendaHead").innerHTML = ""; $("passed").innerHTML = ""; $("agendaTag").textContent = "";
+    tl.style.height = ""; tl.innerHTML = `<div id="empty">Your agenda appears here.</div>`; $("agendaHead").innerHTML = ""; $("passed").innerHTML = ""; $("agendaTag").textContent = "";
     return;
   }
   const day = new Date(a.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
@@ -273,7 +279,12 @@ function renderAgenda() {
   const all = items.concat(a.blocked.map((b) => ({ start: b.start, end: b.end }))).concat(removed);
   const lo = Math.min(mins(a.window[0]), ...all.map((s) => mins(s.start)));
   const hi = Math.max(mins(a.window[1]), ...all.map((s) => mins(s.end)));
-  const H = tl.clientHeight || 520, px = H / (hi - lo), y = (t) => (mins(t) - lo) * px;
+  // Fit the day to the visible area, but never so small that the shortest session's card (a title line and
+  // a time line) gets clipped: then the timeline grows taller and the area scrolls.
+  const fit = Math.max($("agendaScroll").clientHeight - 32, 300);
+  const shortest = Math.min(...items.map((s) => mins(s.end) - mins(s.start)), 60);
+  const px = Math.max(fit / (hi - lo), 54 / shortest), y = (t) => (mins(t) - lo) * px;
+  tl.style.height = `${(hi - lo) * px}px`;
   let html = "";
   for (let m = Math.ceil(lo / 60) * 60; m <= hi; m += 60) html += `<div class="hour" style="top:${(m - lo) * px}px"><span>${ampm(hhmm(m))}</span></div>`;
   for (const b of a.blocked) html += `<div class="block" style="top:${y(b.start)}px;height:${(mins(b.end) - mins(b.start)) * px}px">${esc(b.label || "Blocked")} · ${ampm(b.start)}–${ampm(b.end)}</div>`;
@@ -284,9 +295,9 @@ function renderAgenda() {
   for (const s of items) {
     const h = (mins(s.end) - mins(s.start)) * px;
     const fresh = isNew(s.code) && S.previous;
-    html += `<div class="card ${s.kind} ${selected === s.code ? "sel" : ""} ${fresh && animate ? "new" : ""}" data-code="${esc(s.code)}" style="top:${y(s.start)}px;height:${h - 2}px">
-      <div class="t"><span class="badge ${s.kind}">${s.kind === "hands-on" ? "HANDS-ON" : s.kind === "talk" ? "TALK" : "EVENT"}</span>${fresh ? `<span class="badge new">NEW</span>` : (ch.kept || []).includes(s.code) && S.previous ? `<span class="badge kept">KEPT</span>` : ""}${s.fromScheduler ? `<span class="badge kept" title="The scheduler found this one itself">SCHEDULER PICK</span>` : ""}${s.code.startsWith("NEO") ? `<span class="badge booth" title="${s.format === "Booth theater" ? "Neo4j booth theater, booth 732 (draft schedule)" : "A Neo4j event, not in the AWS catalog"}">${s.format === "Booth theater" ? "NEO4J BOOTH" : "NEO4J EVENT"}</span>` : ""}${esc(s.code)} · ${esc(s.title)}${h < 60 ? ` <span class="m">· ${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)}</span>` : ""}</div>
-      ${h < 60 ? "" : `<div class="m">${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)} · ${esc(roomShort(s.room))}</div>`}
+    html += `<div class="card ${s.kind} ${h < 60 ? "short" : ""} ${selected === s.code ? "sel" : ""} ${fresh && animate ? "new" : ""}" data-code="${esc(s.code)}" title="${esc(s.code)} · ${esc(s.title)}" style="top:${y(s.start)}px;height:${h - 2}px">
+      <div class="t"><span class="badge ${s.kind}">${s.kind === "hands-on" ? "HANDS-ON" : s.kind === "talk" ? "TALK" : "EVENT"}</span>${fresh ? `<span class="badge new">NEW</span>` : (ch.kept || []).includes(s.code) && S.previous ? `<span class="badge kept">KEPT</span>` : ""}${s.fromScheduler ? `<span class="badge kept" title="The scheduler found this one itself">SCHEDULER PICK</span>` : ""}${s.code.startsWith("NEO") ? `<span class="badge booth" title="${s.format === "Booth theater" ? "Neo4j booth theater, booth 732 (draft schedule)" : "A Neo4j event, not in the AWS catalog"}">${s.format === "Booth theater" ? "NEO4J BOOTH" : "NEO4J EVENT"}</span>` : ""}${esc(s.code)} · ${esc(s.title)}</div>
+      <div class="m">${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)}${h < 60 ? "" : ` · ${esc(roomShort(s.room))}`}</div>
       ${h > 95 ? `<div class="w">${esc(s.why)}</div>` : ""}
     </div>`;
   }
@@ -327,10 +338,9 @@ function drawStrip() {
   const blvd = [[36.0880, -115.1757], [36.1023, -115.1727], [36.1160, -115.1722], [36.1236, -115.1700], [36.1300, -115.1650]].map(([la, lo]) => P(la, lo));
   const i15 = [[36.0880, -115.1850], [36.1300, -115.1805]].map(([la, lo]) => P(la, lo));
   const cross = [["Tropicana Ave", 36.1023], ["Flamingo Rd", 36.1160], ["Spring Mountain / Sands Ave", 36.1236]];
-  const items = S.agenda?.items || [], passed = S.agenda?.passedOver || [];
+  const items = S.agenda?.items || [];
   const V = Object.fromEntries(venues.venues.map((v) => [v.name, P(v.lat, v.lon)]));
   let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Stylized map of the Las Vegas Strip with conference venues">`;
-  svg += `<defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker></defs>`;
   svg += `<polyline points="${i15.map((p) => p.join(",")).join(" ")}" fill="none" stroke="var(--road)" stroke-width="5" stroke-dasharray="2 6" stroke-linecap="round"/>`;
   svg += `<text x="${i15[1][0] - 4}" y="${i15[1][1] + 14}" fill="var(--muted)" font-size="10" text-anchor="end">I-15</text>`;
   for (const [name, lat] of cross) { const [x1, yy] = P(lat, -115.1880), [x2] = P(lat, -115.1610); svg += `<line x1="${x1}" y1="${yy}" x2="${x2}" y2="${yy}" stroke="var(--road)" stroke-width="2"/><text x="${x1}" y="${yy - 4}" fill="var(--muted)" font-size="10">${name}</text>`; }
@@ -344,30 +354,49 @@ function drawStrip() {
     const lx = x0 + (x1 - x0) * at + uy * gap, ly = y0 + (y1 - y0) * at - ux * gap;  // Left-hand normal: (uy, -ux).
     svg += `<text transform="translate(${lx},${ly}) rotate(${angle})" fill="var(--muted)" font-size="10" text-anchor="middle">Las Vegas Blvd (the Strip)</text>`;
   }
-  // Route between agenda stops.
+  // Route between agenda stops. No arrowheads: the moving dashes and the stop numbers give the direction,
+  // and arrowheads hid short legs such as Caesars Forum to the Venetian.
+  // Each venue's marker: a circle, or for several stops ("1,4,5") a pill wide enough for the numbers.
+  const LEFT = ["Caesars Palace", "Allegiant Stadium", "The Cosmopolitan"];
+  const marker = (name) => {
+    const stops = items.map((s, i) => (s.venue === name ? i + 1 : 0)).filter(Boolean);
+    const r = stops.length ? 10 : 7;  // Small enough that a short leg between neighbours stays visible.
+    const num = stops.join(","), digits = num.replace(/,/g, "").length;
+    return { stops, r, num, hw: Math.max(r, (digits * 6.6 + (stops.length - 1) * 3.2) / 2 + 5) };
+  };
+  // Boxes leg labels must avoid: every venue's marker and name (with its Neo4j note), then the labels
+  // placed so far. Around the Venetian, names and a back-and-forth day's labels otherwise pile up.
+  const taken = venues.venues.map((v) => {
+    const [x, y] = V[v.name], { hw } = marker(v.name), neo = NEO4J_PLACES.find((n) => n.venue === v.name);
+    const left = LEFT.includes(v.name), w = v.name.length * 7.6 + (neo && !left ? (neo.label.length + 4) * 6.4 : 0);
+    return left ? [x - hw - 6 - w, y - 11, x + hw, y + (neo ? 20 : 7)] : [x - hw, y - 11, x + hw + 6 + w, y + 7];
+  });
+  const free = ([a0, b0, a1, b1]) => !taken.some(([c0, d0, c1, d1]) => a0 < c1 && c0 < a1 && b0 < d1 && d0 < b1);
   for (let i = 1; i < items.length; i++) {
     const [x1, y1] = V[items[i - 1].venue] || [], [x2, y2] = V[items[i].venue] || [];
     if (x1 == null || x2 == null || items[i - 1].venue === items[i].venue) continue;
     const mx = (x1 + x2) / 2 + (y2 - y1) * 0.25, my = (y1 + y2) / 2 - (x2 - x1) * 0.25;
     const leg = S.agenda.legs[i - 1];
-    svg += `<path d="M${x1},${y1} Q${mx},${my} ${x2},${y2}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arr)"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="1s" repeatCount="indefinite"/></path>`;
+    svg += `<path d="M${x1},${y1} Q${mx},${my} ${x2},${y2}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-dasharray="7 5"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="1s" repeatCount="indefinite"/></path>`;
     // Label the curve at its midpoint, pushed out to the east, clear of the venue names on the Strip.
-    const lx = (x1 + 2 * mx + x2) / 4, ly = (y1 + 2 * my + y2) / 4;
-    svg += `<text x="${Math.max(lx, x1, x2) + 24}" y="${ly + 4}" fill="var(--accent)" font-size="12" font-weight="700" stroke="var(--panel)" stroke-width="4" paint-order="stroke">~${leg?.minutes ?? "?"} min</text>`;
+    const text = `~${leg?.minutes ?? "?"} min`, lw = text.length * 7.2;
+    const lx = Math.max((x1 + 2 * mx + x2) / 4, x1, x2) + 24, mid = (y1 + 2 * my + y2) / 4;
+    const box = (y) => [lx - 2, y - 7, lx + lw, y + 8];
+    const ly = [0, 14, -14, 28, -28, 42, -42, 56, -56].map((d) => mid + d).find((y) => y > 10 && y < H - 22 && free(box(y))) ?? mid;
+    taken.push(box(ly));
+    svg += `<text x="${lx}" y="${ly + 4}" fill="var(--accent)" font-size="12" font-weight="700" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${text}</text>`;
   }
   for (const v of venues.venues) {
-    const [x, y] = V[v.name], stops = items.map((s, i) => (s.venue === v.name ? i + 1 : 0)).filter(Boolean);
-    const isPassed = passed.some((p) => p.venue === v.name) && !stops.length;
-    const r = stops.length ? 15 : 7;
-    svg += `<g style="cursor:pointer" data-v="${esc(v.name)}"><circle cx="${x}" cy="${y}" r="${r}" fill="${stops.length ? "var(--accent)" : isPassed ? "transparent" : "var(--pin)"}" stroke="${isPassed ? "var(--muted)" : "none"}" stroke-dasharray="3 2" stroke-width="2"/>`;
-    if (stops.length) svg += `<text x="${x}" y="${y + 5}" fill="#062421" font-size="13" font-weight="800" text-anchor="middle">${stops.join(",")}</text>`;
-    const left = ["Caesars Palace", "Allegiant Stadium", "The Cosmopolitan"].includes(v.name);
+    const [x, y] = V[v.name], { stops, r, num, hw } = marker(v.name);
+    svg += `<g style="cursor:pointer" data-v="${esc(v.name)}"><rect x="${x - hw}" y="${y - r}" width="${2 * hw}" height="${2 * r}" rx="${r}" fill="${stops.length ? "var(--accent)" : "var(--pin)"}"/>`;
+    if (stops.length) svg += `<text x="${x}" y="${y + 4}" fill="#062421" font-size="11" font-weight="800" text-anchor="middle">${num}</text>`;
+    const left = LEFT.includes(v.name);
     // Where to find Neo4j: the booth and the evening reception, always on the map. Venues labelled on the
     // right get the marker on the same line; those on the left (more room below) on the line under.
     const neo = NEO4J_PLACES.find((n) => n.venue === v.name);
     const inline = neo && !left ? `<tspan fill="var(--ok)" font-size="11" font-weight="700">  ● ${esc(neo.label)}</tspan>` : "";
-    svg += `<text x="${x + (left ? -r - 6 : r + 6)}" y="${y + 4}" fill="${stops.length ? "#fff" : "var(--text)"}" font-size="13" font-weight="${stops.length ? 700 : 500}" text-anchor="${left ? "end" : "start"}">${esc(v.name)}${inline}</text>`;
-    if (neo && left) svg += `<text x="${x - r - 6}" y="${y + 18}" fill="var(--ok)" font-size="11" font-weight="700" text-anchor="end">${esc(neo.label)}</text>`;
+    svg += `<text x="${x + (left ? -hw - 6 : hw + 6)}" y="${y + 4}" fill="${stops.length ? "#fff" : "var(--text)"}" font-size="13" font-weight="${stops.length ? 700 : 500}" text-anchor="${left ? "end" : "start"}">${esc(v.name)}${inline}</text>`;
+    if (neo && left) svg += `<text x="${x - hw - 6}" y="${y + 18}" fill="var(--ok)" font-size="11" font-weight="700" text-anchor="end">${esc(neo.label)}</text>`;
     svg += `</g>`;
   }
   svg += `<text x="${W - 8}" y="${H - 8}" fill="var(--muted)" font-size="10" text-anchor="end">N ↑ · stylized, not to scale</text></svg>`;
