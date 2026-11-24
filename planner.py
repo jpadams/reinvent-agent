@@ -270,7 +270,9 @@ def options_for(date, window, slot, goal, blocked, anchors, exclude, include=fro
     # The fallback search: the slot's subject first (the goal can name other slots' subjects), then the goal,
     # which keeps a vaguely labelled slot on-topic.
     extra = []
-    if anchors:  # Only on a replan: substitutes that fit around the sessions being kept.
+    # Only on a replan: substitutes that fit around the sessions being kept. Not for an "as many as fit"
+    # group (more): when its candidates run out, fewer sessions beats an off-topic filler.
+    if anchors and not slot.get("more"):
         by_goal = rg.find_sessions(graph, embed, f"{slot['label']}. {goal}", [], date, "", slot["kind"],
                                    window[0], window[1], 30)
         fallback = found + [f for f in by_goal if f["code"] not in order]
@@ -335,6 +337,8 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
             for it), never just "Talk 1". E.g. [{"label": "Hands-on: tool permissions", "kind": "hands-on",
             "candidates": [{"code": "...", "why": "one sentence, grounded in the catalog, on how it advances
             the goal"}, ...]}]. kind is "hands-on", "talk", or "" for either. Give 3 to 8 candidates per slot.
+            Optional "sessions": how many sessions on the slot's subject (default 1). For "as many as
+            fit", set it to 3; the scheduler shares the candidates between them (4 slots in all at most).
         blocked: Times the attendee can't attend: [{"start": "HH:MM", "end": "HH:MM", "label": "Customer meeting"}].
         reject_scheduler_picks: Codes of sessions the scheduler picked itself (fromScheduler) that don't serve
             the goal, so it won't pick them again. Never your own candidates or sessions on the agenda: for
@@ -346,13 +350,30 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
             stay off on later replans too. Only what the attendee asked to remove.
     """
     with ToolCall("plan_agenda", date=date, window=[window_start, window_end],
-                  slots=[{"label": sl.get("label"), "candidates": [c.get("code") for c in sl.get("candidates", [])]}
+                  slots=[{"label": sl.get("label"), "candidates": [c.get("code") for c in sl.get("candidates", [])],
+                          **({"sessions": sl["sessions"]} if sl.get("sessions") else {})}
                          for sl in slots], blocked=blocked, reject_scheduler_picks=reject_scheduler_picks,
                   include=include, drop=drop):
+        # A session the attendee named that day widens the window to cover it: the agent once guessed a
+        # window (11:00-17:30) that left out the very talk they asked to see.
+        named = [s for c in include or [] if c and (s := lookup(c)) and s["date"] == date]
+        window_start = min([window_start] + [s["start"] for s in named], key=minutes)
+        window_end = max([window_end] + [s["end"] for s in named], key=minutes)
         window = (window_start, window_end)
         blocked = [b for b in blocked or [] if b.get("start") and b.get("end")]
-        slots = [{"label": sl.get("label") or f"Session {i + 1}", "kind": sl.get("kind") or kind_from_label(sl.get("label", "")),
-                  "candidates": sl.get("candidates") or []} for i, sl in enumerate(slots[:4])]
+        # "As many as fit": a slot with "sessions": n gets n - 1 copies sharing its candidates, and the solver's
+        # one-run-per-series rule keeps them distinct. (Asking the agent to split candidates over slots itself
+        # was unreliable.) The group never takes the scheduler's fallback finds: when its candidates run out,
+        # fewer sessions beats an off-topic filler. A single-candidate slot can't fill a copy, so it gets none.
+        base, more = [], []
+        for i, sl in enumerate(slots[:4]):
+            label, candidates = sl.get("label") or f"Session {i + 1}", sl.get("candidates") or []
+            kind = sl.get("kind") or kind_from_label(sl.get("label", ""))
+            n = min(sl["sessions"], 3) if isinstance(sl.get("sessions"), int) and len(candidates) > 1 else 1
+            base.append({"label": label, "kind": kind, "candidates": candidates, **({"more": True} if n > 1 else {})})
+            more += [{"label": f"{label} ({k})", "kind": kind, "candidates": list(candidates), "more": True}
+                     for k in range(2, n + 1)]
+        slots = (base + more)[:4]
         with lock:
             previous = state["agenda"]
         # The attendee's own say: sessions they named go on first, and dropped ones (by series, so other runs
@@ -364,9 +385,12 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
         keep = [s["code"] for s in (previous or {}).get("items", [])
                 if series_of(s["code"]) not in dropped] if previous and previous["date"] == date else []
         if keep:  # A replan fills every slot the agenda had, with the earlier candidates after any new ones.
+            labels = {old["label"] for old in previous["slots"]}
             for old in previous["slots"]:
-                same = next((sl for sl in slots if sl["label"] == old["label"]
-                             or (old["kind"] and sl["kind"] == old["kind"] and sum(x["kind"] == old["kind"] for x in slots) == 1)), None)
+                # Same label, or else the only new slot of its kind that doesn't already continue an old slot.
+                same = next((sl for sl in slots if sl["label"] == old["label"]), None) or next(
+                    (sl for sl in slots if old["kind"] and sl["kind"] == old["kind"] and sl["label"] not in labels
+                     and sum(x["kind"] == old["kind"] for x in slots) == 1), None)
                 if same is None:
                     slots.append(old)
                 else:
@@ -374,6 +398,8 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
                     same["candidates"] += [c for c in old["candidates"] if c.get("code") not in codes]
                     if not same["kind"]:
                         same["kind"] = old["kind"]
+                    if old.get("more"):
+                        same["more"] = True
         if dropped:  # Take dropped sessions out of every slot, and a slot that had only them.
             trimmed = []
             for sl in slots:
@@ -438,7 +464,7 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
         event("saved", codes=[s["code"] for s in best])
         review = [{"code": s["code"], "title": s["title"], "slot": s["slot"]} for s in best if s.get("fromScheduler")]
         return rg.to_json({
-            "saved": True, "unfilledSlots": unfilled, "changes": diff,
+            "saved": True, "window": list(window), "unfilledSlots": unfilled, "changes": diff,
             **({"notPlaced": not_placed} if not_placed else {}),
             **({"reviewThese": "The scheduler filled these from its own search because none of your candidates "
                 "fit. For each, call explain_pick if it serves the goal; otherwise call plan_agenda again with it "
@@ -484,8 +510,13 @@ How to plan:
    on it), the day, their free window, and the sessions they want (e.g. one hands-on and one talk).
    With two subjects and two sessions, give each session its own subject. Give each slot different
    candidates: a session can fill only one slot. If they don't say how many
-   sessions, plan two or three across their window. A short agenda that's on-subject beats filler: if a
+   sessions, plan two or three across their window; for "as many as fit" or "a few", give the subject's
+   slot "sessions": 3 and 6 to 8 candidates.
+   A short agenda that's on-subject beats filler: if a
    slot stays empty, say why (e.g. the other matching session conflicts) and offer another day.
+   If they give no times, their window is 08:00–18:00, run later for any evening session they want.
+   A session they ask for by code, title, or speaker ("see Jeremy's talk") gets a slot of its own with
+   only that code as its candidate, and goes in include; the window must cover it.
 2. For each session wanted, search with find_sessions using that subject, the day, the window, and the
    kind ("hands-on" or "talk"). related_sessions finds sessions that share topics and services, for a
    talk that introduces what a hands-on session practices.

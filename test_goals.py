@@ -43,7 +43,7 @@ CONVERSATIONS = [
       "perfect, let's see Jeremy and as many agent talks as fit on Tues",
       "Let's opt for AIM278-S",
       "drop IND302-R"],
-     {"date": "2026-12-01", "codes": ["AIM278-S", "NEO04"], "codes_not": ["IND302-R"]}),
+     {"date": "2026-12-01", "codes": ["AIM278-S", "NEO04"], "codes_not": ["IND302-R"], "min_items": 3}),
 ]
 
 
@@ -80,6 +80,8 @@ def run_one(index: int) -> bool:
         for c in want.get("codes", []):
             if c not in [s["code"] for s in items]:
                 problems.append(f"{c} not on the agenda")
+        if len(items) < want.get("min_items", 0):
+            problems.append(f"{len(items)} sessions, expected at least {want['min_items']}")
         for c in want.get("codes_not", []):
             if c in [s["code"] for s in items]:
                 problems.append(f"{c} is on the agenda")

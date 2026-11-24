@@ -24,6 +24,8 @@ Read `README.md` first for what the demo does, how to run it, and the graph mode
 - **The attendee's explicit asks beat keeping: `include` and `drop` on `plan_agenda`.** Before these, "let's opt for AIM278-S" and "drop IND302-R" both failed. Keeping outranked the new pick, the old slot candidates merged the dropped session back in, and `reject_scheduler_picks` ignores anything on the agenda. Now:
   - **`include`:** ranks the named sessions first in `solve`, by series. Sessions it can't place come back as `notPlaced`, with the checker's reason.
   - **`drop`:** removes a session's whole series from keep, candidates, repeats, and fallback finds. It persists in `state["agenda"]["dropped"]` until the session is included again.
+- **"As many as fit" is a slot field, `sessions` (up to 3), not something the agent works out.** Told to split candidates over several slots, the agent often made one slot, which planned a single talk. Now the scheduler copies the slot, and the solver's one-run-per-series rule keeps the copies distinct. The group (flag `more`) never takes the scheduler's fallback finds, because those were off-topic sponsored talks such as ARC210-S and IND105-S. `sessions` is ignored on a single-candidate slot.
+- **A named session widens the window.** A code in `include` stretches the window to cover it. Without this, the agent guessed an 11:00–17:30 window for "see Jeremy's talk" and missed the 17:30 talk itself. The prompt also gives a default window, 08:00–18:00, when no times are given.
 - **Small guards for real failures:**
   - A slot labelled "talk" or "hands-on" gets that kind when the agent omits it.
   - Blocked time equal to a single-candidate slot's own time is ignored. The agent would "block" the reception it wanted, but a lunch block that shares a talk's time is kept.
@@ -39,7 +41,7 @@ Read `README.md` first for what the demo does, how to run it, and the graph mode
 ## How to check a change
 
 1. `uv run test_demo.py` runs the scripted booth demo. The expected result is COM317-R plus SEC407-R, then COM317-R plus OPN309 after the curveball. Run it 3 or more times: the agent varies, and single runs have hidden regressions.
-2. `uv run test_goals.py` runs 7 unscripted conversations, including past regressions; `uv run test_goals.py N` runs one. The last full run passed 6/7. The failing one (lunch block, #2) was then fixed and passed 2/2, but the full suite hasn't been rerun since.
+2. `uv run test_goals.py` runs 8 unscripted conversations, including past regressions; `uv run test_goals.py N` runs one. The last full run passed 8/8. #7 is the swap regression: see Jeremy plus as many agent talks as fit, then "opt for AIM278-S".
 3. `uv run browser_check.py` checks the page. Run it with the planner running, then look at the screenshots in `./screenshots`.
 4. `uv run reinvent-relate-agent.py "Which MCP talks are at the Venetian on Wednesday?"` should return AIM265-S only.
 5. Run `uvx ruff check --select F,E9 *.py` before committing.
