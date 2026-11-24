@@ -1,5 +1,24 @@
 # re:Invent 2026 planner: Strands Agents + Neo4j Relate
 
+## Quick start
+
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`) and an OpenAI API key.
+
+```sh
+export OPENAI_API_KEY=sk-...
+uv run planner.py
+```
+
+Open **http://localhost:8026** and click **Demo: plan my Tuesday afternoon**, then **Curveball**.
+
+That's it: the graph (`reinvent-2026.rl`) is already in the repo, and uv installs everything else on first run. For the command-line guide instead:
+
+```sh
+uv run reinvent-relate-agent.py "Which MCP talks are at the Venetian on Wednesday?"
+```
+
+## What this is
+
 A demo for **Build an Expert Agent with AWS Strands Agents and Neo4j Relate**. A [Strands](https://strandsagents.com/) agent plans an attendee's re:Invent day from a [Relate](https://relatedb.ai/) graph of the catalog. Relate is an embedded graph database, so the whole graph, with its vector and full-text indexes, is one file, `reinvent-2026.rl`, opened inside the app.
 
 | File | What it is |
