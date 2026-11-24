@@ -9,7 +9,7 @@ Read `README.md` first for what the demo does, how to run it, and the graph mode
 
 ## Where things stand
 
-- **Branch:** the work is on the `planner-demo` branch, several commits ahead of `main`. It hasn't been merged or pushed.
+- **Branch:** commit straight to `main` (Jeremy's call, 23 Nov). The `planner-demo` and `planner-include-drop` branches are merged.
 - **Commits:** sign them off with `git commit -s`, and commit only when Jeremy asks.
 - **Running:** the planner runs locally (`uv run planner.py`, http://localhost:8026). After a change to `planner.py` or `reinvent_graph.py`, restart it; the page itself (`web/index.html`) is re-read on every request.
 - **The graph file:** `reinvent-2026.rl` is committed and must be committed with any change to the build, the schema, `booth-theater.csv`, or `neo4j-events.json`. Rebuild with `uv run planner.py build` (needs `OPENAI_API_KEY`; 10–30 s).
