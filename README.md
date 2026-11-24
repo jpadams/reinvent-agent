@@ -9,6 +9,8 @@ export OPENAI_API_KEY=sk-...
 uv run planner.py
 ```
 
+![The planner: chat with the agent, the day's agenda with passed-over sessions to add, and the route on a map of the Strip](docs/planner-screenshot.png)
+
 Open **http://localhost:8026** and click **Demo: plan my Tuesday afternoon**, then **Curveball**.
 
 That's it: the graph (`reinvent-2026.rl`) is already in the repo, and uv installs everything else on first run. For the command-line guide instead:
