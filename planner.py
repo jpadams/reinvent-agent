@@ -298,19 +298,26 @@ def options_for(date, window, slot, goal, blocked, anchors, exclude, include=fro
     return sorted(ranked, key=lambda s: s["rank"])[:MAX_OPTIONS]
 
 
-def solve(date, window, options, blocked, keep, include=frozenset()):
+def solve(date, window, options, blocked, keep, include=frozenset(), groups=None):
     """Pick at most one candidate per slot so the agenda checks out. Prefer, in order: the sessions the
     attendee asked for (include, by series, so another run of one counts), filling every slot, keeping
-    sessions already on the agenda, keeping another run of them, and the better-ranked candidates."""
+    sessions already on the agenda, keeping another run of them, and the better-ranked candidates.
+    The slots of an "as many as fit" group (groups: each slot's group, or None) don't count toward filling
+    every slot: they take the best-ranked candidate that fits, then the next, and so on. Filling them
+    regardless once passed over OPN406-R1 (Strands) to fit three loosely related talks."""
+    groups = groups or [None] * len(options)
+    sizes = {g: groups.count(g) for g in dict.fromkeys(groups) if g}
     keep_series = {series_of(c) for c in keep}
     best, best_score = [], None
     for combo in itertools.product(*[opts + [None] for opts in options]):  # None leaves a slot empty.
         picks = [s for s in combo if s]
         if not picks or len({series_of(s["code"]) for s in picks}) < len(picks):
             continue
+        best_first = tuple(r for g, n in sizes.items() for r in (sorted(
+            s["rank"] for s, sg in zip(combo, groups) if s and sg == g) + [float("inf")] * n)[:n])
         score = (-sum(series_of(s["code"]) in include for s in picks),
-                 len(combo) - len(picks), -sum(s["code"] in keep for s in picks),
-                 -sum(series_of(s["code"]) in keep_series for s in picks), sum(s["rank"] for s in picks))
+                 sum(s is None and not g for s, g in zip(combo, groups)), -sum(s["code"] in keep for s in picks),
+                 -sum(series_of(s["code"]) in keep_series for s in picks), best_first, sum(s["rank"] for s in picks))
         if best_score is not None and score >= best_score:
             continue
         if not check(date, window, picks, blocked):
@@ -345,7 +352,8 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
             the goal, so it won't pick them again. Never your own candidates or sessions on the agenda: for
             those, use drop.
         include: Codes the attendee asked for by name ("add AIM278-S", "let's go with X"). The scheduler puts
-            them on first and moves or removes whatever they conflict with. Also list each as a candidate in
+            them on first and moves or removes whatever they conflict with. They stay pinned on later
+            replans of the day until dropped. Also list each as a candidate in
             the slot it replaces; otherwise it gets a slot of its own.
         drop: Codes the attendee wants off the agenda ("drop X", "not X"). They, and other runs of them,
             stay off on later replans too. Only what the attendee asked to remove.
@@ -355,9 +363,21 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
                           **({"sessions": sl["sessions"]} if sl.get("sessions") else {})}
                          for sl in slots], blocked=blocked, reject_scheduler_picks=reject_scheduler_picks,
                   include=include, drop=drop):
+        with lock:
+            previous = state["agenda"]
+        same_day = bool(previous) and previous["date"] == date
+        # The attendee's own say: sessions they name go on first and stay pinned on later replans of the day
+        # (the agent doesn't always repeat include: "drop X" right after "opt for Y" once lost Y to fill two
+        # slots). Dropped ones (by series, so other runs of them too) stay off. Naming one again undoes a drop.
+        named_now = [c.strip() for c in include or [] if c and c.strip()]
+        dropped = ({series_of(c.strip()) for c in drop or [] if c and c.strip()}
+                   | set((previous or {}).get("dropped", []))) - {series_of(c) for c in named_now}
+        include = [c for c in dict.fromkeys(named_now + ((previous or {}).get("pinned", []) if same_day else []))
+                   if series_of(c) not in dropped]
+        wanted = {series_of(c) for c in include}
         # A session the attendee named that day widens the window to cover it: the agent once guessed a
         # window (11:00-17:30) that left out the very talk they asked to see.
-        named = [s for c in include or [] if c and (s := lookup(c)) and s["date"] == date]
+        named = [s for c in include if (s := lookup(c)) and s["date"] == date]
         window_start = min([window_start] + [s["start"] for s in named], key=minutes)
         window_end = max([window_end] + [s["end"] for s in named], key=minutes)
         window = (window_start, window_end)
@@ -371,28 +391,43 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
             label, candidates = sl.get("label") or f"Session {i + 1}", sl.get("candidates") or []
             kind = sl.get("kind") or kind_from_label(sl.get("label", ""))
             n = min(sl["sessions"], 3) if isinstance(sl.get("sessions"), int) and len(candidates) > 1 else 1
-            base.append({"label": label, "kind": kind, "candidates": candidates, **({"more": True} if n > 1 else {})})
-            more += [{"label": f"{label} ({k})", "kind": kind, "candidates": list(candidates), "more": True}
+            group = {"more": True, "group": label} if n > 1 else {}
+            base.append({"label": label, "kind": kind, "candidates": candidates, **group})
+            more += [{"label": f"{label} ({k})", "kind": kind, "candidates": list(candidates), **group}
                      for k in range(2, n + 1)]
         slots = (base + more)[:4]
         if date not in {d["date"] for d in DAYS}:
             return rg.to_json({"saved": False, "reason": f"{date} isn't a conference day. Days: "
                                + ", ".join(d["date"] for d in DAYS) + ". Ask the attendee which day they mean."})
         unknown = [c.get("code") for sl in slots for c in sl["candidates"] if not lookup(c.get("code") or "")]
-        unknown += [c for c in include or [] if c and not lookup(c)]
+        unknown += [c for c in include if not lookup(c)]
         if unknown:
             return rg.to_json({"saved": False, "reason": f"Not in the catalog: {', '.join(map(str, unknown))}. "
                                "Use only codes from find_sessions results: search first, then plan."})
-        with lock:
-            previous = state["agenda"]
-        # The attendee's own say: sessions they named go on first, and dropped ones (by series, so other runs
-        # of them too) stay off this and later replans. Naming a dropped session again brings it back.
-        include = [c.strip() for c in include or [] if c and c.strip()]
-        wanted = {series_of(c) for c in include}
-        dropped = ({series_of(c.strip()) for c in drop or [] if c and c.strip()}
-                   | set((previous or {}).get("dropped", []))) - wanted
+        # Candidates from a search without the day can be on other days. One with a run that day is fine
+        # (options_for adds it); the rest are dropped, and a slot left with none is refused, so the agent
+        # searches that day again in the same turn instead of saving an empty slot and asking.
+        off_day = {}
+        for sl in slots:
+            for c in sl["candidates"]:
+                s = lookup(c["code"])
+                if s["date"] != date and c["code"] not in include and not graph.run(SAME_DAY_REPEATS, code=s["code"], date=date):
+                    off_day[c["code"]] = s["date"]
+        if off_day:
+            empty = []
+            for sl in slots:
+                had = bool(sl["candidates"])
+                sl["candidates"] = [c for c in sl["candidates"] if c["code"] not in off_day]
+                if had and not sl["candidates"] and sl["label"] not in empty:
+                    empty.append(sl["label"])
+            if empty:
+                event("rejected", problems=[f"No candidates on {date} for: {', '.join(empty)}."])
+                return rg.to_json({"saved": False, "reason": f"These candidates aren't on {date} and have no run that "
+                                   "day: " + ", ".join(f"{k} ({v})" for k, v in off_day.items()) + ". That leaves "
+                                   f"no candidates for: {', '.join(empty)}. Call find_sessions for each with "
+                                   f"date=\"{date}\", then call plan_agenda again now. Don't ask the attendee."})
         keep = [s["code"] for s in (previous or {}).get("items", [])
-                if series_of(s["code"]) not in dropped] if previous and previous["date"] == date else []
+                if series_of(s["code"]) not in dropped] if same_day else []
         if keep:  # A replan fills every slot the agenda had, with the earlier candidates after any new ones.
             labels = {old["label"] for old in previous["slots"]}
             for old in previous["slots"]:
@@ -408,8 +443,9 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
                     same["candidates"] += [c for c in old["candidates"] if c.get("code") not in codes]
                     if not same["kind"]:
                         same["kind"] = old["kind"]
-                    if old.get("more"):
-                        same["more"] = True
+                    for key in ("more", "group"):
+                        if old.get(key):
+                            same[key] = old[key]
         if dropped:  # Take dropped sessions out of every slot, and a slot that had only them.
             trimmed = []
             for sl in slots:
@@ -440,7 +476,7 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
         blocked = [b for b in blocked if (b["start"], b["end"]) not in sole_times]
         options = [options_for(date, window, sl, goal, blocked, anchors, excluded, set(include), dropped)
                    for sl in slots]
-        best = solve(date, window, options, blocked, keep, wanted)
+        best = solve(date, window, options, blocked, keep, wanted, [sl.get("group") for sl in slots])
         if not best:
             event("rejected", problems=["Nothing fits that day and window."])
             return rg.to_json({"saved": False, "reason": "No session fits that day and window, even with the graph's "
@@ -467,7 +503,7 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
             diff = changes(previous, best)
             state["previous"] = previous
             state["agenda"] = {"date": date, "window": list(window), "goal": goal, "items": best, "blocked": blocked,
-                               "slots": slots, "unfilled": unfilled, "excluded": sorted(excluded), "dropped": sorted(dropped),
+                               "slots": slots, "unfilled": unfilled, "excluded": sorted(excluded), "dropped": sorted(dropped), "pinned": include,
                                "passedOver": passed, "legs": legs(best),
                                "changes": diff}
             state["version"] += 1
@@ -519,23 +555,28 @@ How to plan:
 1. Turn the attendee's goal into the subjects to learn, what they already know (skip intro-level material
    on it), the day, their free window, and the sessions they want (e.g. one hands-on and one talk).
    With two subjects and two sessions, give each session its own subject. Give each slot different
-   candidates: a session can fill only one slot. If they don't say how many
+   candidates: a session can fill only one slot. When they say how many ("one hands-on and one talk"),
+   give exactly those slots, without "sessions". If they don't say how many
    sessions ("some talks on X", "good sessions on X"), plan two or three across their window: give the
-   subject's slot "sessions": 3 and 6 to 8 candidates, as for "a few" or "as many as fit".
+   subject's slot "sessions": 3 and up to 8 candidates, as for "a few" or "as many as fit". Such a slot
+   puts on every candidate that fits, best first, so give only ones whose title or summary is on the
+   subject (for "Strands Agents", ones that name Strands): two good ones beat three with a loose one.
    A short agenda that's on-subject beats filler: if a
    slot stays empty, say why (e.g. the other matching session conflicts) and offer another day.
    If they give no times, their window is 08:00–18:00, run later for any evening session they want.
    A session they ask for by code, title, or speaker ("see Jeremy's talk") gets a slot of its own with
    only that code as its candidate, and goes in include; the window must cover it.
 2. For each session wanted, search with find_sessions using that subject, the day, the window, and the
-   kind ("hands-on" or "talk"). related_sessions finds sessions that share topics and services, for a
+   kind ("hands-on" or "talk"). Take candidates only from a search with that day's date: a search
+   without it (say, from an earlier question) returns sessions on any day. related_sessions finds sessions that share topics and services, for a
    talk that introduces what a hands-on session practices.
 3. Call plan_agenda with one slot per session wanted, 3 to 8 candidates each in your order of preference,
    each with a "why" grounded in its title or description. The scheduler adds its own graph-search finds,
    picks a combination that fits, saves it, and reports what it passed over; don't do the timing yourself.
    On a replan, it can substitute its own finds (fromScheduler) when none of yours fit. If one serves the goal, call
    explain_pick with a better why; if it doesn't, call plan_agenda again with its code in reject_scheduler_picks.
-   explain_pick only writes a why: never use it for notes or to remove a session. If it
+   explain_pick only writes a why: never use it for notes or to remove a session. If plan_agenda
+   refuses a call, fix it and call again in the same turn; don't hand the fix to the attendee. If it
    left a slot unfilled, say so.
 Whenever the attendee wants sessions on a day, build the agenda with plan_agenda, even for a quick list:
 only the scheduler checks overlaps and travel. When their first message names a day, search, then save

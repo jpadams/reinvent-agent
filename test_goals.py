@@ -44,6 +44,11 @@ CONVERSATIONS = [
       "Let's opt for AIM278-S",
       "drop IND302-R"],
      {"date": "2026-12-01", "codes": ["AIM278-S", "NEO04"], "codes_not": ["IND302-R"], "min_items": 3}),
+    # Regression: a speaker question first searched every day; the plan then reused those other-day
+    # candidates, left the talks slot empty, and offered to redo it. Expect NEO04 and 2+ Tuesday talks.
+    (["Is Jeremy Adams speaking?",
+      "Great, I want to see him speak on Tuesday and then some talks about running agents in prod."],
+     {"date": "2026-12-01", "codes": ["NEO04"], "min_items": 3}),
 ]
 
 
