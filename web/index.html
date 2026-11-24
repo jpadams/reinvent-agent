@@ -238,6 +238,7 @@ function renderLog() {
     if (e.kind === "cypher") return `<div class="cy" title="click to expand">${e.times > 1 ? `<b style="color:var(--text)">×${e.times}</b> ` : ""}${esc(e.cypher)}  — ${e.rows} rows, ${Math.round(e.ms * 10) / 10} ms</div>`;
     if (e.kind === "rejected") return `<div class="rej">✗ ${esc(e.problems.join(" "))}</div>`;
     if (e.kind === "saved") return `<div class="ok">✓ agenda saved: ${esc(e.codes.join(", "))}</div>`;
+    if (e.kind === "nudge") return `<div class="tool">↻ planner asked the agent to save an agenda: ${esc(e.reason)}</div>`;
     if (e.kind === "tool-done") return "";
     return "";
   }).join("");

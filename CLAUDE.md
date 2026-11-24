@@ -26,7 +26,10 @@ Read `README.md` first for what the demo does, how to run it, and the graph mode
   - **`drop`:** removes a session's whole series from keep, candidates, repeats, and fallback finds. It persists in `state["agenda"]["dropped"]` until the session is included again.
 - **"As many as fit" is a slot field, `sessions` (up to 3), not something the agent works out.** Told to split candidates over several slots, the agent often made one slot, which planned a single talk. Now the scheduler copies the slot, and the solver's one-run-per-series rule keeps the copies distinct. The group (flag `more`) never takes the scheduler's fallback finds, because those were off-topic sponsored talks such as ARC210-S and IND105-S. `sessions` is ignored on a single-candidate slot.
 - **A named session widens the window.** A code in `include` stretches the window to cover it. Without this, the agent guessed an 11:00–17:30 window for "see Jeremy's talk" and missed the 17:30 talk itself. The prompt also gives a default window, 08:00–18:00, when no times are given.
+- **A first message that names a day gets an agenda in that turn**, even when it's phrased as a question, so visitors edit a plan rather than read suggestions. The prompt says so. If the agent searched exactly one day and still saved nothing on the first round, `chat()` sends it one "planner note" asking it to build the agenda, and the page logs that as a nudge. When the message names no day, the agent asks: told to always plan, it once invented 29 Nov.
+- **The scheduler's fallback finds only fill slots carried over from the last agenda** (flag `carried`). Once first rounds planned, turn 2 became a replan. A new "Lunch" slot then took off-topic filler, SVC002-D2 and COM345, and broke the Strands regression.
 - **Small guards for real failures:**
+  - `plan_agenda` refuses dates that aren't conference days, and codes that aren't in the catalog. Pushed to plan at once, the agent once passed made-up codes (S1–S5) before searching.
   - A slot labelled "talk" or "hands-on" gets that kind when the agent omits it.
   - Blocked time equal to a single-candidate slot's own time is ignored. The agent would "block" the reception it wanted, but a lunch block that shares a talk's time is kept.
   - Keyword phrases match when all their words appear, so "Strands Agents" matches "agents with Strands".
@@ -53,7 +56,6 @@ When a test fails intermittently, log the tool arguments; `ToolCall` events carr
 - **Take-away for visitors:** a QR code with the agenda. Phones can't reach localhost, so either encode the agenda as text in the QR, or host it.
 - **Booth schedule:** it's a draft. Update `booth-theater.csv` and rebuild when it changes. The Neo4j After Dark details came from a PDF of the event page, because events.neo4j.com blocks automated fetches.
 - **Agent variance worth watching:**
-  - "I want talks about X on Tuesday" sometimes gets a plain list instead of a planned agenda.
   - The agent occasionally nominates a loosely related session (IND315-R for Strands talks).
   - The curveball swap is OPN309 most of the time. Recent runs: 6/6, then 5/5, then 7/8, with IND421-R or SEC352-R otherwise.
 - **The "why this session" graph is sparse for Neo4j sessions**, because they have no topics or services. Tagging them, say with Topic "Artificial Intelligence" and a Neo4j or Graph topic, would make the graph path richer.

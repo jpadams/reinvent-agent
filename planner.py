@@ -270,9 +270,10 @@ def options_for(date, window, slot, goal, blocked, anchors, exclude, include=fro
     # The fallback search: the slot's subject first (the goal can name other slots' subjects), then the goal,
     # which keeps a vaguely labelled slot on-topic.
     extra = []
-    # Only on a replan: substitutes that fit around the sessions being kept. Not for an "as many as fit"
-    # group (more): when its candidates run out, fewer sessions beats an off-topic filler.
-    if anchors and not slot.get("more"):
+    # Only on a replan, and only for a slot carried over from the last agenda: substitutes that fit around
+    # the sessions being kept. A slot new this turn has only the agent's candidates (once, a new "Lunch" slot
+    # took an off-topic filler). Nor for an "as many as fit" group (more): fewer sessions beats filler.
+    if anchors and slot.get("carried") and not slot.get("more"):
         by_goal = rg.find_sessions(graph, embed, f"{slot['label']}. {goal}", [], date, "", slot["kind"],
                                    window[0], window[1], 30)
         fallback = found + [f for f in by_goal if f["code"] not in order]
@@ -374,6 +375,14 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
             more += [{"label": f"{label} ({k})", "kind": kind, "candidates": list(candidates), "more": True}
                      for k in range(2, n + 1)]
         slots = (base + more)[:4]
+        if date not in {d["date"] for d in DAYS}:
+            return rg.to_json({"saved": False, "reason": f"{date} isn't a conference day. Days: "
+                               + ", ".join(d["date"] for d in DAYS) + ". Ask the attendee which day they mean."})
+        unknown = [c.get("code") for sl in slots for c in sl["candidates"] if not lookup(c.get("code") or "")]
+        unknown += [c for c in include or [] if c and not lookup(c)]
+        if unknown:
+            return rg.to_json({"saved": False, "reason": f"Not in the catalog: {', '.join(map(str, unknown))}. "
+                               "Use only codes from find_sessions results: search first, then plan."})
         with lock:
             previous = state["agenda"]
         # The attendee's own say: sessions they named go on first, and dropped ones (by series, so other runs
@@ -392,8 +401,9 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
                     (sl for sl in slots if old["kind"] and sl["kind"] == old["kind"] and sl["label"] not in labels
                      and sum(x["kind"] == old["kind"] for x in slots) == 1), None)
                 if same is None:
-                    slots.append(old)
+                    slots.append({**old, "carried": True})
                 else:
+                    same["carried"] = True
                     codes = {c.get("code") for c in same["candidates"]}
                     same["candidates"] += [c for c in old["candidates"] if c.get("code") not in codes]
                     if not same["kind"]:
@@ -510,8 +520,8 @@ How to plan:
    on it), the day, their free window, and the sessions they want (e.g. one hands-on and one talk).
    With two subjects and two sessions, give each session its own subject. Give each slot different
    candidates: a session can fill only one slot. If they don't say how many
-   sessions, plan two or three across their window; for "as many as fit" or "a few", give the subject's
-   slot "sessions": 3 and 6 to 8 candidates.
+   sessions ("some talks on X", "good sessions on X"), plan two or three across their window: give the
+   subject's slot "sessions": 3 and 6 to 8 candidates, as for "a few" or "as many as fit".
    A short agenda that's on-subject beats filler: if a
    slot stays empty, say why (e.g. the other matching session conflicts) and offer another day.
    If they give no times, their window is 08:00–18:00, run later for any evening session they want.
@@ -528,7 +538,11 @@ How to plan:
    explain_pick only writes a why: never use it for notes or to remove a session. If it
    left a slot unfilled, say so.
 Whenever the attendee wants sessions on a day, build the agenda with plan_agenda, even for a quick list:
-only the scheduler checks overlaps and travel. Don't add blocked time they didn't mention (keynotes
+only the scheduler checks overlaps and travel. When their first message names a day, search, then save
+an agenda in the same turn, even when they phrase it as a question ("Is X speaking Tuesday? I'd like to see
+some talks on Y") or ask for suggestions: answer the question, show the plan, and they'll edit from there.
+If they name no day, don't pick one: answer from find_sessions and ask which day. Only ever pass codes that
+find_sessions (or another tool) returned. Don't add blocked time they didn't mention (keynotes
 included).
 For questions that aren't plans, answer from find_sessions. Only call a session "about" something when its
 matchedKeywords or summary shows it.
@@ -575,7 +589,22 @@ def chat(text: str) -> str:
         state["messages"].append({"role": "user", "text": text})
         state["version"] += 1
     try:
+        with lock:
+            seen = len(state["events"])
         reply = str(agent(text)).strip()
+        with lock:
+            calls = [e for e in state["events"][seen:] if e["kind"] == "tool"]
+            first_round = state["agenda"] is None
+        days = sorted({e["args"]["date"] for e in calls if e["name"] == "find_sessions" and e["args"].get("date")})
+        # The attendee should see a schedule from the first round, but the agent sometimes stops at
+        # suggestions. If it searched a day and saved nothing, ask it once to build the agenda.
+        if first_round and len(days) == 1 and not any(e["name"] == "plan_agenda" for e in calls):
+            event("nudge", reason="Searched a day but saved no agenda.")
+            reply = str(agent(
+                f"(Planner note, not from the attendee: nothing is on their screen yet. Build their agenda for "
+                f"{days[0]} now with plan_agenda from the sessions you found, for what they asked. Then reply to "
+                "their last message again in full, answering any question in it: this reply replaces your "
+                "previous one.)")).strip()
     except Exception as err:  # Show the failure on the page instead of hanging it.
         reply = f"Sorry, that failed: {err}"
     with lock:
