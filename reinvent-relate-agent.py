@@ -222,8 +222,10 @@ the subject in a semantic query. Venue filters match part of a name, so "Venetia
 "located in The Venetian". find_sessions ranks by similarity, so drop results that aren't really
 about the subject, and don't claim a semantic list is complete. Include each session's code, title,
 time, venue and room, speakers, and catalog link. The data comes from a community mirror of the catalog,
-so say the official catalog is the authority when times matter. If the tools don't have the answer,
-say so. Refer to speakers by name or as "they"; don't guess anyone's pronouns.""",
+so say the official catalog is the authority when times matter. Neo4j booth theater talks (format
+"Booth theater", codes NEO01...) are 30-minute talks at booth 732 in the Venetian Expo (Hall B); they
+aren't in the AWS catalog, have no catalog link, and their schedule is a draft. If the tools don't have
+the answer, say so. Refer to speakers by name or as "they"; don't guess anyone's pronouns.""",
 )
 
 if __name__ == "__main__":

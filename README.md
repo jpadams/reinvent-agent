@@ -9,6 +9,7 @@ A demo for **Build an Expert Agent with AWS Strands Agents and Neo4j Relate**. A
 | `reinvent_graph.py` | The shared graph: the one-time build, hybrid search, and the read-only graph |
 | `web/index.html` | The page: chat, tool and Cypher log, agenda timeline, Strip map, venue schematics, "why this session" graph |
 | `test_demo.py` | Runs the two booth turns through the agent and checks the agenda it saves |
+| `booth-theater.csv` | The Neo4j booth theater talks (booth 732, Venetian Expo Hall B), from the draft booth schedule. The build adds them to the graph. |
 
 ## Run
 
@@ -68,5 +69,6 @@ The agent's choices can vary from run to run. `test_demo.py` checks what must ho
 ### Caveats
 
 - The catalog comes from a public community mirror (https://ri26.awsclassroom.kr/). The official AWS catalog is the authority.
+- The Neo4j booth theater talks aren't in the AWS catalog. They come from `booth-theater.csv`, a draft schedule: edit it and rerun `uv run planner.py build`. Each title gets a code (NEO01, NEO02...), and its repeats get -R, -R1..., so they link to each other like the catalog's repeats.
 - Travel minutes are planning estimates in `reinvent_graph.py` (`TRAVEL_MINUTES`), not AWS guidance. Edit them and rebuild.
 - The Strip map is stylized, and each venue's inside view is a schematic built from the catalog's room names, not a floor plan.

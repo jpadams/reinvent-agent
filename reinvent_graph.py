@@ -12,6 +12,7 @@ index on its text. find_sessions fuses the two by reciprocal rank, in one Cypher
 """
 
 import atexit
+import csv
 import json
 import os
 import queue
@@ -38,7 +39,11 @@ EMBED_MODEL = "text-embedding-3-small"
 
 # Formats where attendees build, not watch.
 HANDS_ON = {"Workshop", "Builders' session", "Lab", "Bootcamp", "Gamified learning"}
-TALKS = {"Breakout session", "Chalk talk", "Code talk", "Lightning talk", "Keynote", "Mainstage"}
+TALKS = {"Breakout session", "Chalk talk", "Code talk", "Lightning talk", "Keynote", "Mainstage", "Booth theater"}
+
+# Talks at the Neo4j booth theater, which aren't in the AWS catalog. The schedule is a draft.
+BOOTH_THEATER = Path(__file__).with_name("booth-theater.csv")
+BOOTH_ROOM = "Venetian | Level 2 | Hall B | Expo | Booth 732"
 
 # Campus locations (approximate) for the map. Places like "Flight Club (located in The Venetian)"
 # belong to the campus they name.
@@ -85,6 +90,28 @@ def fold(text: str) -> str:
     """Lowercase text without accents: "Gołąb" becomes "golab"."""
     text = unicodedata.normalize("NFKD", text.lower().translate(str.maketrans({"ł": "l", "ø": "o", "đ": "d", "ß": "ss", "æ": "ae"})))
     return "".join(c for c in text if not unicodedata.combining(c))
+
+
+def booth_sessions() -> list[dict]:
+    """The Neo4j booth theater talks, in the catalog's shape. Each title gets a code (NEO01...), and each
+    repeat of it a -R, -R1... suffix, so repeats share a Series like the catalog's do."""
+    sessions, codes, runs = [], {}, {}
+    with open(BOOTH_THEATER, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            title = row["title"].strip()
+            base = codes.setdefault(title, f"NEO{len(codes) + 1:02d}")
+            n = runs[title] = runs.get(title, -1) + 1
+            code = base if n == 0 else f"{base}-R" if n == 1 else f"{base}-R{n - 1}"
+            sessions.append({
+                "id": f"booth-{code}", "code": code, "title": title, "type": "Booth theater", "level": "",
+                "abstract": "A 30-minute talk at the Neo4j booth theater, booth 732 in the Venetian Expo (Hall B). "
+                            "The booth schedule is a draft.",
+                "topics": [], "services": [], "url": "",
+                "speakers": [{"name": row["speaker"].strip(), "company": "Neo4j"}],
+                "slots": [{"date": row["date"], "start": row["start"], "end": row["end"], "venue": "Venetian",
+                           "room": BOOTH_ROOM}],
+            })
+    return sessions
 
 
 def series_code(code: str) -> str:
@@ -171,7 +198,7 @@ def load(path: Path, sessions: list[dict], embeddings: list[list[float]]) -> dic
                 "id": s["id"], "code": s["code"], "series": series_code(s["code"]), "title": s["title"].strip(),
                 "abstract": s.get("abstract") or "", "format": s.get("type") or "", "kind": kind(s.get("type") or ""),
                 "level": s.get("level") or "", "text": session_text(s), "embedding": e,
-                "url": CATALOG + "?" + urlencode({"search": s["code"]}),
+                "url": s["url"] if "url" in s else CATALOG + "?" + urlencode({"search": s["code"]}),
                 "date": slot.get("date", ""), "start": slot.get("start", ""), "venue": campus(slot.get("venue", "")),
             })
         for i in range(0, len(rows), 500):  # Relate caps one commit at 64 MB, so store the embeddings in batches.
@@ -234,7 +261,10 @@ def load(path: Path, sessions: list[dict], embeddings: list[list[float]]) -> dic
 def build(client) -> None:
     started = time.time()
     sessions = fetch_sessions()
-    print(f"Fetched {len(sessions)} sessions from {MIRROR} ({time.time() - started:.1f}s)")
+    booth = booth_sessions()
+    print(f"Fetched {len(sessions)} sessions from {MIRROR}, plus {len(booth)} Neo4j booth theater talks "
+          f"({time.time() - started:.1f}s)")
+    sessions += booth
     embeddings = embed_all(client, [session_text(s) for s in sessions])
     print(f"Embedded {len(embeddings)} sessions with {EMBED_MODEL} ({time.time() - started:.1f}s)")
     with tempfile.TemporaryDirectory() as tmp:

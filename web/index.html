@@ -73,6 +73,7 @@ form button:disabled { opacity: .5; }
 .badge.talk { background: var(--talk); color: #1a0f3d; }
 .badge.new { background: var(--ok); color: #052e14; }
 .badge.kept { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.badge.booth { background: var(--accent); color: #062421; }
 .card.new { animation: glow 2.4s ease-out 1; }
 @keyframes glow { 0% { box-shadow: 0 0 0 4px var(--ok); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .block { background: repeating-linear-gradient(135deg, rgba(255,107,129,.16) 0 8px, rgba(255,107,129,.05) 8px 16px); border: 1px solid rgba(255,107,129,.5); color: var(--blocked); font-weight: 600; font-size: 13px; left: 0; }
@@ -282,8 +283,8 @@ function renderAgenda() {
     const h = (mins(s.end) - mins(s.start)) * px;
     const fresh = isNew(s.code) && S.previous;
     html += `<div class="card ${s.kind} ${selected === s.code ? "sel" : ""} ${fresh && animate ? "new" : ""}" data-code="${esc(s.code)}" style="top:${y(s.start)}px;height:${h - 2}px">
-      <div class="t"><span class="badge ${s.kind}">${s.kind === "hands-on" ? "HANDS-ON" : "TALK"}</span>${fresh ? `<span class="badge new">NEW</span>` : (ch.kept || []).includes(s.code) && S.previous ? `<span class="badge kept">KEPT</span>` : ""}${s.fromScheduler ? `<span class="badge kept" title="The scheduler found this one itself">SCHEDULER PICK</span>` : ""}${esc(s.code)} · ${esc(s.title)}</div>
-      <div class="m">${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)} · ${esc(roomShort(s.room))}</div>
+      <div class="t"><span class="badge ${s.kind}">${s.kind === "hands-on" ? "HANDS-ON" : "TALK"}</span>${fresh ? `<span class="badge new">NEW</span>` : (ch.kept || []).includes(s.code) && S.previous ? `<span class="badge kept">KEPT</span>` : ""}${s.fromScheduler ? `<span class="badge kept" title="The scheduler found this one itself">SCHEDULER PICK</span>` : ""}${s.format === "Booth theater" ? `<span class="badge booth" title="Neo4j booth theater, booth 732 (draft schedule)">NEO4J BOOTH</span>` : ""}${esc(s.code)} · ${esc(s.title)}${h < 60 ? ` <span class="m">· ${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)}</span>` : ""}</div>
+      ${h < 60 ? "" : `<div class="m">${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)} · ${esc(roomShort(s.room))}</div>`}
       ${h > 95 ? `<div class="w">${esc(s.why)}</div>` : ""}
     </div>`;
   }
@@ -425,7 +426,7 @@ async function select(code) {
   const g = await api(`/api/why?code=${encodeURIComponent(code)}`);
   const sentence = s ? s.why : p ? `Passed over: ${p.reason}` : "";
   $("whyBody").innerHTML = `<div class="ttl">${esc(code)} · ${esc(it?.title || g.title)}</div><div class="sent">${esc(sentence)}</div>
-    <div style="font-size:12px;color:var(--muted)">${esc((it?.speakers || []).join(", "))} · <a href="${esc(it?.link)}" target="_blank" rel="noopener">catalog</a></div>
+    <div style="font-size:12px;color:var(--muted)">${esc((it?.speakers || []).join(", "))} · ${it?.link ? `<a href="${esc(it.link)}" target="_blank" rel="noopener">catalog</a>` : "Neo4j booth 732 · not in the AWS catalog"}</div>
     <div id="whyGraph">${whySvg(g)}</div>`;
 }
 function whySvg(g) {
