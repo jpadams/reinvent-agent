@@ -361,10 +361,13 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
         # Rejections only ever apply to the scheduler's own finds: never to the agent's candidates or the agenda.
         own = {c.get("code") for sl in slots for c in sl["candidates"]} | set(keep)
         excluded = (set(reject_scheduler_picks or []) | set((previous or {}).get("excluded", []))) - own
-        # Blocked time is for things outside the agenda. A period that is exactly one of the candidates' own
-        # times is the agent "blocking" for that session, which would rule the session out: ignore it.
-        candidate_times = {(s["start"], s["end"]) for sl in slots for c in sl["candidates"] if (s := lookup(c.get("code", "")))}
-        blocked = [b for b in blocked if (b["start"], b["end"]) not in candidate_times]
+        # Blocked time is for things outside the agenda. When a slot's only candidate is one session (say an
+        # evening reception) and a blocked period is exactly its time, that's the agent "blocking" for the
+        # session, which would rule it out: ignore that period. A real block (lunch 12:00-13:00) can share
+        # its time with one of several candidates, so this only applies to single-candidate slots.
+        sole_times = {(s["start"], s["end"]) for sl in slots if len(sl["candidates"]) == 1
+                      if (s := lookup(sl["candidates"][0].get("code", "")))}
+        blocked = [b for b in blocked if (b["start"], b["end"]) not in sole_times]
         options = [options_for(date, window, sl, goal, blocked, anchors, excluded) for sl in slots]
         best = solve(date, window, options, blocked, keep)
         if not best:

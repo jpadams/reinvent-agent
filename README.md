@@ -9,22 +9,27 @@ A demo for **Build an Expert Agent with AWS Strands Agents and Neo4j Relate**. A
 | `reinvent_graph.py` | The shared graph: the one-time build, hybrid search, and the read-only graph |
 | `web/index.html` | The page: chat, tool and Cypher log, agenda timeline, Strip map, venue schematics, "why this session" graph |
 | `test_demo.py` | Runs the two booth turns through the agent and checks the agenda it saves |
+| `test_goals.py` | Runs unscripted visitor requests (including past regressions) and checks each saved agenda |
+| `browser_check.py` | Drives the booth demo in headless Chrome and saves screenshots, to check the page by eye |
+| `CLAUDE.md` | Notes for picking up the work: design decisions, lessons learned, how to verify, and open items |
 | `neo4j-events.json` | Other Neo4j events, in the catalog's shape: Neo4j After Dark (Tue 1 Dec, 7–10 pm, The Barbershop at The Cosmopolitan). The build adds them to the graph. |
 | `booth-theater.csv` | The Neo4j booth theater talks (booth 732, Venetian Expo Hall B), from the draft booth schedule. The build adds them to the graph. |
 
 ## Run
 
-You need [uv](https://docs.astral.sh/uv/), an OpenAI API key, and (optionally) the [`relate` CLI](https://relatedb.ai/), which the build uses to compact the file.
+You need [uv](https://docs.astral.sh/uv/) and an OpenAI API key. The scripts use the `relate-db` 1.2.0 Python package, which uv installs. The [`relate` CLI](https://relatedb.ai/) is optional: the build uses it to compact the file (without it, the file is larger), and you can query the graph with it, as in `relate -d reinvent-2026.rl --read-only "MATCH (v:Venue) RETURN v.name"`.
 
 ```sh
 export OPENAI_API_KEY=sk-...
-uv run planner.py build      # one time, about 10 s: fetch the catalog, embed 2,655 sessions, write reinvent-2026.rl
-uv run planner.py            # open http://localhost:8026
+uv run planner.py build      # 10-30 s: fetch the catalog, add the Neo4j talks and events, embed ~2,670 sessions, write reinvent-2026.rl
+uv run planner.py            # open http://localhost:8026 (set PORT for another port)
 uv run reinvent-relate-agent.py "Which MCP talks are at the Venetian on Wednesday?"
 uv run test_demo.py          # the two booth turns, checked
+uv run test_goals.py         # unscripted visitor requests, checked (a few minutes)
+uv run browser_check.py      # with the planner running: screenshots of the demo in ./screenshots
 ```
 
-Set `OPENAI_MODEL` to use a different chat model (default `gpt-5.4-mini`). Click **New visitor** to start over between visitors.
+`reinvent-2026.rl` is committed, so you only need the build to pick up catalog changes or edits to the Neo4j files. Set `OPENAI_MODEL` to use a different chat model (default `gpt-5.4-mini`). Click **New visitor** to start over between visitors.
 
 ## The booth demo (90 seconds)
 
@@ -59,17 +64,20 @@ The agent's choices can vary from run to run. `test_demo.py` checks what must ho
 ### Graph
 
 ```
-(:Speaker)-[:PRESENTS]->(:Session {code, title, abstract, format, kind, level, url})
-(:Session)-[:REPEAT_OF]->(:Series)
-(:Session)-[:HAS_SLOT]->(:Slot {date, start, end, room})-[:AT_VENUE]->(:Venue {name, lat, lon})
+(:Speaker {name, company})-[:PRESENTS]->(:Session {code, title, abstract, format, kind, level, url})
+(:Session)-[:REPEAT_OF]->(:Series {code, title})            every run of a session
+(:Session)-[:HAS_SLOT]->(:Slot {date, day, start, end, displayTime, room, place})-[:AT_VENUE]->(:Venue)
 (:Session)-[:HAS_TOPIC]->(:Topic)   (:Session)-[:MENTIONS_SERVICE]->(:Service)
-(:Venue)-[:TRAVEL {minutes}]->(:Venue)
+(:Venue {name, lat, lon})-[:TRAVEL {minutes}]->(:Venue)     estimated travel minutes
 (:SessionChunk {text, embedding, date, venue, start, kind})-[:FROM_DOCUMENT]->(:Session)
 ```
+
+`kind` is `hands-on`, `talk`, or `other`. Dates are `YYYY-MM-DD` and times `HH:MM` Las Vegas time, stored as strings. `SessionChunk.embedding` is a 1536-dimension FLOAT32 vector (`text-embedding-3-small`) with a vector index that filters by date, venue, start, and kind, and `SessionChunk.text` has a full-text index.
 
 ### Caveats
 
 - The catalog comes from a public community mirror (https://ri26.awsclassroom.kr/). The official AWS catalog is the authority.
 - The Neo4j booth theater talks aren't in the AWS catalog. They come from `booth-theater.csv`, a draft schedule: edit it and rerun `uv run planner.py build`. Each title gets a code (NEO01, NEO02...), and its repeats get -R, -R1..., so they link to each other like the catalog's repeats.
+- Other Neo4j events come from `neo4j-events.json`, one object per event in the catalog's shape (code, title, type, abstract, url, speakers, slots). Edit it and rebuild. An event at a venue the map doesn't have also needs that venue in `VENUES` and `TRAVEL_MINUTES` in `reinvent_graph.py`.
 - Travel minutes are planning estimates in `reinvent_graph.py` (`TRAVEL_MINUTES`), not AWS guidance. Edit them and rebuild. The Cosmopolitan isn't an AWS venue: it's on the map for Neo4j After Dark.
 - The Strip map is stylized, and each venue's inside view is a schematic built from the catalog's room names, not a floor plan.
