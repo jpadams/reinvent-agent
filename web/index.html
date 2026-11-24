@@ -92,6 +92,9 @@ form button:disabled { opacity: .5; }
 #passed .p { border: 1px dashed var(--line); border-radius: 10px; padding: 6px 10px; margin-top: 6px; color: var(--muted); font-size: 12px; cursor: pointer; }
 #passed .p b { color: #c3cbe0; font-weight: 600; }
 #passed .p .r { color: var(--handson); }
+#passed .p .add { float: right; margin: 0 0 4px 8px; background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
+#passed .p .add:hover:not(:disabled) { background: var(--accent); color: #062421; }
+#passed .p .add:disabled { opacity: .4; cursor: default; }
 /* Map + why */
 #mapTabs { display: flex; gap: 6px; padding: 0 14px 6px; flex-wrap: wrap; }
 #mapTabs button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; font-size: 12px; }
@@ -312,8 +315,10 @@ function renderAgenda() {
   tl.classList.toggle("ghosts", removed.length > 0);
   tl.querySelectorAll(".card").forEach((c) => (c.onclick = () => select(c.dataset.code)));
   $("passed").innerHTML = a.passedOver.length ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">Considered, not chosen</div>` + a.passedOver.map((p) =>
-    `<div class="p" data-code="${esc(p.code)}"><b>${esc(p.code)} · ${esc(p.title)}</b><br>${ampm(p.start)} · ${esc(p.venue)} — <span class="r">${esc(p.reason)}</span></div>`).join("") : "";
+    `<div class="p" data-code="${esc(p.code)}"><button class="add" data-add="${esc(p.code)}" data-back="${(a.wasOn || []).includes(p.code) ? 1 : ""}" ${S.busy ? "disabled" : ""} title="Ask the planner to put this on, replacing whatever it conflicts with">${(a.wasOn || []).includes(p.code) ? "↩ Add back" : "+ Add"}</button><b>${esc(p.code)} · ${esc(p.title)}</b><br>${ampm(p.start)} · ${esc(p.venue)} — <span class="r">${esc(p.reason)}</span></div>`).join("") : "";
   $("passed").querySelectorAll(".p").forEach((c) => (c.onclick = () => select(c.dataset.code)));
+  // "+ Add" (or "Add back", for a session that was on the agenda earlier) asks the agent, as if typed, so the chat says what it replaced and later turns know about it.
+  $("passed").querySelectorAll(".add").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); send(`${b.dataset.back ? "Add back" : "Swap in"} ${b.dataset.add}`); }));
 }
 function roomShort(room) { return (room || "").split("|").slice(1).map((x) => x.trim()).filter(Boolean).slice(-2).join(" · "); }
 
