@@ -1,0 +1,22 @@
+[
+  {
+    "id": "neo4j-after-dark-2026",
+    "code": "NEOAD",
+    "title": "Neo4j After Dark at The Barbershop, with a live performance by almost monday",
+    "type": "Reception",
+    "level": "",
+    "abstract": "An exclusive night of live music, cocktails, and connection, hidden behind a speakeasy door on the Strip. Doors open at 7:00 pm with craft cocktails and chef-driven bites (the first 100 guests get a signed almost monday poster). At 7:30 pm, Neo4j's President and Chief Product Officer Sudhir Hasbe talks with Amit Sharma of 3M about why context is what makes AI work. From 8:00 to 10:00 pm, networking continues with a private set by almost monday, the band behind the Billboard Alternative Airplay #1 hit \"can't slow down\". Request a pass on the event page: space is limited, every request is reviewed, and a request isn't a confirmed pass. Bring your re:Invent badge and confirmation email.",
+    "topics": [],
+    "services": [],
+    "url": "https://events.neo4j.com/neo4jreceptionaws2026",
+    "speakers": [
+      {"name": "Sudhir Hasbe", "company": "Neo4j"},
+      {"name": "Amit Sharma", "company": "3M"},
+      {"name": "Mark Woodhams", "company": "Neo4j"}
+    ],
+    "slots": [
+      {"date": "2026-12-01", "start": "19:00", "end": "22:00", "venue": "The Cosmopolitan",
+       "room": "The Cosmopolitan | The Barbershop Cuts & Cocktails"}
+    ]
+  }
+]

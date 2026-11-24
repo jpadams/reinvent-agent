@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>re:Invent Planner</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  --bg: #0b1020; --panel: #121a30; --panel2: #18223d; --line: #26324f; --text: #e8ecf6; --muted: #8e9ab8;
+  --accent: #35d0ba; --handson: #ffb547; --talk: #a98bff; --other: #6f7d9c; --blocked: #ff6b81; --ok: #4ade80;
+  --road: #2c3a5c; --pin: #dfe6f5;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button { font: inherit; cursor: pointer; }
+a { color: var(--accent); }
+header { display: flex; align-items: center; gap: 16px; padding: 10px 20px; border-bottom: 1px solid var(--line); }
+header h1 { font-size: 18px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+header .sub { color: var(--muted); font-size: 13px; }
+header .spacer { flex: 1; }
+header button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; }
+.logos { display: flex; align-items: center; gap: 14px; margin-right: 6px; }
+.logos .relate { height: 32px; width: auto; }
+.logos .strands { height: 14px; width: auto; color: var(--text); }
+.logos .x { color: var(--muted); font-size: 14px; }
+main { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(360px, 1.15fr) minmax(360px, 1.25fr);
+  gap: 14px; padding: 14px; height: calc(100% - 52px); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin: 0; padding: 12px 14px 8px; font-weight: 600; display: flex; gap: 8px; align-items: center; }
+.panel h2 .tag { text-transform: none; letter-spacing: 0; color: var(--accent); font-weight: 500; }
+/* Chat */
+#chat { flex: 1.3; overflow-y: auto; padding: 0 14px 10px; display: flex; flex-direction: column; gap: 10px; }
+.msg { padding: 9px 12px; border-radius: 12px; max-width: 95%; white-space: pre-wrap; }
+.msg.user { background: var(--panel2); align-self: flex-end; border: 1px solid var(--line); }
+.msg.agent { background: rgba(53,208,186,.09); border: 1px solid rgba(53,208,186,.28); }
+.msg.agent strong { color: #fff; }
+.thinking { color: var(--muted); font-size: 13px; display: flex; gap: 8px; align-items: center; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1s infinite alternate; }
+@keyframes pulse { from { opacity: .25 } to { opacity: 1 } }
+#chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px 0; }
+.chip { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; font-size: 13px; text-align: left; }
+.chip:hover:not(:disabled) { border-color: var(--accent); }
+.chip:disabled { opacity: .4; cursor: default; }
+form { display: flex; gap: 8px; padding: 10px 14px 12px; }
+form textarea { flex: 1; resize: none; height: 58px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font: inherit; }
+form button { background: var(--accent); color: #062421; border: 0; border-radius: 10px; padding: 0 16px; font-weight: 650; }
+form button:disabled { opacity: .5; }
+/* Tool log */
+#log { flex: 1; overflow-y: auto; padding: 0 14px 12px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; border-top: 1px solid var(--line); }
+#log .tool { margin-top: 8px; color: var(--text); }
+#log .tool b { color: var(--accent); }
+#log .cy { color: var(--muted); margin-left: 14px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#log .cy.open { white-space: pre-wrap; color: #c8d2ea; }
+#log .rej { color: var(--blocked); margin-left: 14px; }
+#log .ok { color: var(--ok); margin-left: 14px; }
+/* Agenda */
+#agendaHead { padding: 0 14px 6px; color: var(--muted); font-size: 13px; min-height: 22px; }
+#agendaHead b { color: var(--text); }
+#timeline { position: relative; flex: 1; margin: 10px 14px 22px 58px; min-height: 0; }
+.hour { position: absolute; left: -50px; right: 0; border-top: 1px dashed var(--line); font-size: 11px; color: var(--muted); }
+.hour span { position: absolute; top: -8px; left: 0; width: 42px; }
+.card, .block, .ghost { position: absolute; left: 0; right: 0; border-radius: 10px; padding: 6px 10px; overflow: hidden; }
+.card { background: var(--panel2); border: 1px solid var(--line); border-left: 5px solid var(--talk); cursor: pointer; transition: box-shadow .3s; }
+.card.hands-on { border-left-color: var(--handson); }
+.card.sel { box-shadow: 0 0 0 2px var(--accent); }
+.card .t { font-weight: 600; font-size: 14px; line-height: 1.25; }
+.card .m { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.card .w { font-size: 12px; margin-top: 4px; color: #cfd7ea; }
+.badge { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .6px; border-radius: 4px; padding: 1px 5px; margin-right: 6px; vertical-align: 1px; }
+.badge.hands-on { background: var(--handson); color: #2b1a00; }
+.badge.talk { background: var(--talk); color: #1a0f3d; }
+.badge.other { background: var(--pin); color: #0b1020; }
+.badge.new { background: var(--ok); color: #052e14; }
+.badge.kept { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.badge.booth { background: var(--accent); color: #062421; }
+.card.new { animation: glow 2.4s ease-out 1; }
+@keyframes glow { 0% { box-shadow: 0 0 0 4px var(--ok); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.block { background: repeating-linear-gradient(135deg, rgba(255,107,129,.16) 0 8px, rgba(255,107,129,.05) 8px 16px); border: 1px solid rgba(255,107,129,.5); color: var(--blocked); font-weight: 600; font-size: 13px; left: 0; }
+.ghost { border: 1px dashed var(--muted); color: var(--muted); font-size: 12px; text-decoration: line-through; left: auto; width: 23%; right: 0; }
+#timeline.ghosts .card, #timeline.ghosts .block { right: 25%; }
+.leg { position: absolute; left: 18px; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.leg i { display: inline-block; width: 2px; background: var(--muted); }
+.leg.tight { color: var(--handson); }
+#empty { color: var(--muted); padding: 30px 14px; text-align: center; }
+#passed { padding: 0 14px 12px; }
+#passed .p { border: 1px dashed var(--line); border-radius: 10px; padding: 6px 10px; margin-top: 6px; color: var(--muted); font-size: 12px; cursor: pointer; }
+#passed .p b { color: #c3cbe0; font-weight: 600; }
+#passed .p .r { color: var(--handson); }
+/* Map + why */
+#mapTabs { display: flex; gap: 6px; padding: 0 14px 6px; flex-wrap: wrap; }
+#mapTabs button { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; font-size: 12px; }
+#mapTabs button.on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+#map { flex: 1.25; min-height: 0; padding: 0 8px; }
+#map svg { width: 100%; height: 100%; display: block; }
+#why { flex: 1; min-height: 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; }
+#whyBody { flex: 1; min-height: 0; padding: 0 14px 10px; overflow-y: auto; }
+#whyBody .hint { color: var(--muted); font-size: 13px; padding-top: 6px; }
+#whyBody .ttl { font-weight: 650; }
+#whyBody .sent { font-size: 13px; color: #cfd7ea; margin: 4px 0 2px; }
+#whyGraph svg { width: 100%; height: 232px; display: block; }
+.note { font-size: 11px; color: var(--muted); padding: 0 14px 8px; }
+svg text { font-family: system-ui, -apple-system, sans-serif; }
+@media (max-width: 1100px) { main { grid-template-columns: 1fr; height: auto; } .panel { min-height: 520px; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>re:Invent 2026 day planner</h1>
+    <div class="sub">Strands agent + Relate graph running in this process</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="logos">
+  <svg class="strands" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1512 217" fill="currentColor" role="img" aria-label="STRANDS">
+    <g transform="translate(0 0)"><path d="M30.2558 216.833V186.914H0V148.926H36.9794V179.182H121.023V127.075H30.2558V97.1548H0V29.9197H30.2558V0H127.747V29.9197H158.339V67.5714H121.023V37.9879H36.9794V89.759H127.747V119.006H158.339V186.914H127.747V216.833H30.2558Z"/></g>
+    <g transform="translate(30 0)"><path d="M252.894 216.833V37.9879H229.361V67.5714H192.382V29.9197H222.638V0H320.129V29.9197H350.721V67.5714H313.405V37.9879H289.873V216.833H252.894Z"/></g>
+    <g transform="translate(60 0)"><path d="M377.87 216.833V29.9197H408.125V0H505.617V29.9197H536.208V127.075H505.617V156.994H490.825V179.182H520.744V216.833H484.101V186.914H453.509V156.994H414.849V216.833H377.87ZM414.849 119.006H498.893V37.9879H414.849V119.006Z"/></g>
+    <g transform="translate(90 0)"><path d="M576.818 216.833V59.5031H607.073V29.9197H637.329V0H674.309V29.9197H704.564V59.5031H735.156V216.833H697.841V156.994H613.797V216.833H576.818ZM613.797 119.006H697.841V67.5714H667.921V37.9879H643.717V67.5714H613.797V119.006Z"/></g>
+    <g transform="translate(120 0)"><path d="M775.765 216.833V0H812.745V29.9197H842.664V59.5031H873.256V148.926H896.789V0H934.104V216.833H896.789V186.914H866.869V156.994H836.277V67.5714H812.745V216.833H775.765Z"/></g>
+    <g transform="translate(150 0)"><path d="M974.713 216.833V0H1072.2V29.9197H1102.46V59.5031H1133.05V156.994H1102.46V186.914H1072.2V216.833H974.713ZM1011.69 179.182H1065.82V148.926H1095.74V67.5714H1065.82V37.9879H1011.69V179.182Z"/></g>
+    <g transform="translate(180 0)"><path d="M1203.92 216.833V186.914H1173.66V148.926H1210.64V179.182H1294.68V127.075H1203.92V97.1548H1173.66V29.9197H1203.92V0H1301.41V29.9197H1332V67.5714H1294.68V37.9879H1210.64V89.759H1301.41V119.006H1332V186.914H1301.41V216.833H1203.92Z"/></g>
+  </svg>
+  <span class="x">+</span>
+  <svg class="relate" viewBox="0 0 639 483" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Relate"><defs><filter id="hf0" x="1.03205" y="1.03203" width="125.678" height="125.678" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="b"/><feBlend mode="normal" in="SourceGraphic" in2="b" result="s"/><feGaussianBlur stdDeviation="9.58066"/></filter><filter id="hf1" x="553.693" y="246.693" width="84.3567" height="84.3567" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="b"/><feBlend mode="normal" in="SourceGraphic" in2="b" result="s"/><feGaussianBlur stdDeviation="6.43066"/></filter></defs>
+    <path d="M309.776 26C459.554 26 580.992 147.697 580.992 297.795V465.502C580.992 475.166 573.158 483 563.494 483H403.011C393.347 483 385.513 475.166 385.513 465.502V297.795C385.513 255.952 351.53 221.896 309.776 221.896V26Z" fill="#145439"/>
+    <path d="M309.776 26C159.997 26 38.5591 147.697 38.5591 297.795L38.5591 465.502C38.5591 475.166 46.3931 483 56.0569 483H216.541C226.204 483 234.039 475.166 234.039 465.502V297.795C234.039 255.952 268.022 221.896 309.776 221.896V26Z" fill="#0A6190"/>
+    <path d="M282.217 26C431.995 26 553.433 147.697 553.433 297.795V465.502C553.433 475.166 545.599 483 535.935 483H375.451C365.788 483 357.954 475.166 357.954 465.502V297.795C357.954 255.952 323.971 221.896 282.217 221.896V26Z" fill="#8FCB62"/>
+    <path d="M282.217 26C132.438 26 11 147.697 11 297.795V465.502C11 475.166 18.8341 483 28.4978 483H188.982C198.645 483 206.479 475.166 206.479 465.502V297.795C206.479 255.952 240.462 221.896 282.217 221.896V26Z" fill="#8FE3E8"/>
+    <path d="M371.013 99.3696C370.805 99.3696 370.607 99.3477 370.398 99.3477C360.144 99.3477 351.843 112.215 351.843 128.092C351.843 143.968 360.144 156.824 370.398 156.824C370.607 156.824 370.805 156.814 371.013 156.803C380.971 156.297 388.953 143.638 388.953 128.092C388.953 112.545 380.971 99.8747 371.013 99.3696Z" fill="#145439"/>
+    <path d="M212.186 128.092C212.186 143.957 203.875 156.824 193.631 156.824C183.388 156.824 175.076 143.957 175.076 128.092C175.076 112.226 183.377 99.3477 193.631 99.3477C203.886 99.3477 212.186 112.215 212.186 128.092Z" fill="#0A6190"/>
+    <path d="M244.244 134.748C245.781 142.12 249.435 148.951 254.841 154.357C262.021 161.537 272.263 164.532 282.401 164.675V149.758C276.312 149.758 270.471 147.338 266.165 143.032C263.77 140.637 261.958 137.766 260.822 134.642C259.311 130.486 255.855 126.796 251.432 126.796C247.01 126.796 243.342 130.418 244.244 134.748Z" fill="#0A6190"/>
+    <path d="M320.009 134.748C318.473 142.12 314.819 148.951 309.413 154.357C302.233 161.537 291.991 164.532 281.852 164.675V149.758C287.942 149.758 293.782 147.338 298.088 143.032C300.484 140.637 302.295 137.766 303.431 134.642C304.943 130.486 308.399 126.796 312.821 126.796C317.244 126.796 320.911 130.418 320.009 134.748Z" fill="#145439"/>
+    <path d="M57.3609 25.2373C59.0957 18.512 68.6464 18.512 70.3812 25.2373L75.9779 46.9334C76.5891 49.3028 78.4393 51.153 80.8087 51.7642L102.505 57.3609C109.23 59.0957 109.23 68.6464 102.505 70.3812L80.8087 75.9779C78.4393 76.5891 76.5891 78.4393 75.9779 80.8087L70.3812 102.505C68.6464 109.23 59.0957 109.23 57.3609 102.505L51.7642 80.8087C51.153 78.4393 49.3028 76.5891 46.9334 75.9779L25.2373 70.3812C18.512 68.6464 18.512 59.0957 25.2373 57.3609L46.9334 51.7642C49.3028 51.153 51.153 49.3028 51.7642 46.9334L57.3609 25.2373Z" fill="white"/>
+    <g filter="url(#hf0)"><path d="M57.3609 25.2373C59.0957 18.512 68.6464 18.512 70.3812 25.2373L75.9779 46.9334C76.5891 49.3028 78.4393 51.153 80.8087 51.7642L102.505 57.3609C109.23 59.0957 109.23 68.6464 102.505 70.3812L80.8087 75.9779C78.4393 76.5891 76.5891 78.4393 75.9779 80.8087L70.3812 102.505C68.6464 109.23 59.0957 109.23 57.3609 102.505L51.7642 80.8087C51.153 78.4393 49.3028 76.5891 46.9334 75.9779L25.2373 70.3812C18.512 68.6464 18.512 59.0957 25.2373 57.3609L46.9334 51.7642C49.3028 51.153 51.153 49.3028 51.7642 46.9334L57.3609 25.2373Z" fill="white"/></g>
+    <path d="M591.501 262.94C592.666 258.426 599.076 258.426 600.241 262.94L603.997 277.502C604.408 279.093 605.649 280.335 607.24 280.745L621.803 284.501C626.317 285.666 626.317 292.076 621.803 293.241L607.24 296.997C605.649 297.408 604.408 298.649 603.997 300.24L600.241 314.803C599.076 319.317 592.666 319.317 591.501 314.803L587.745 300.24C587.335 298.649 586.093 297.408 584.502 296.997L569.94 293.241C565.426 292.076 565.426 285.666 569.94 284.501L584.502 280.745C586.093 280.335 587.335 279.093 587.745 277.502L591.501 262.94Z" fill="white"/>
+    <g filter="url(#hf1)"><path d="M591.501 262.94C592.666 258.426 599.076 258.426 600.241 262.94L603.997 277.502C604.408 279.093 605.649 280.335 607.24 280.745L621.803 284.501C626.317 285.666 626.317 292.076 621.803 293.241L607.24 296.997C605.649 297.408 604.408 298.649 603.997 300.24L600.241 314.803C599.076 319.317 592.666 319.317 591.501 314.803L587.745 300.24C587.335 298.649 586.093 297.408 584.502 296.997L569.94 293.241C565.426 292.076 565.426 285.666 569.94 284.501L584.502 280.745C586.093 280.335 587.335 279.093 587.745 277.502L591.501 262.94Z" fill="white"/></g>
+  </svg>
+  </div>
+  <button id="reset" title="Start over for the next visitor">New visitor</button>
+</header>
+<main>
+  <section class="panel">
+    <h2>Ask the agent</h2>
+    <div id="chat"></div>
+    <div id="chips"></div>
+    <form id="form"><textarea id="input" placeholder="Tell it your goal and when you're free…"></textarea><button id="send">Plan</button></form>
+    <h2 style="border-top:1px solid var(--line)">Under the hood <span class="tag">tools &amp; Cypher</span></h2>
+    <div id="log"></div>
+  </section>
+  <section class="panel">
+    <h2>Your agenda <span class="tag" id="agendaTag"></span></h2>
+    <div id="agendaHead"></div>
+    <div id="timeline"><div id="empty">Your agenda appears here.</div></div>
+    <div id="passed"></div>
+  </section>
+  <section class="panel">
+    <h2>Where you'll be <span class="tag" id="mapTag"></span></h2>
+    <div id="mapTabs"></div>
+    <div id="map"></div>
+    <div class="note" id="mapNote"></div>
+    <div id="why">
+      <h2>Why this session <span class="tag">the graph path</span></h2>
+      <div id="whyBody"><div class="hint">Click a session to see how it connects to your goal and the rest of your day.</div></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+const mins = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+const ampm = (t) => { const [h, m] = t.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "pm" : "am"}`; };
+
+const DEMO_GOAL = "I'm building a production GenAI agent. I know RAG, but I want to learn tool permissions and evaluation. I only have Tuesday afternoon. Give me one hands-on session and one architecture talk.";
+let S = { version: -1 }, events = [], eventCount = 0, venues = null, selected = null, mapView = "Strip", lastAgendaKey = "";
+
+// ---------- server ----------
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  return r.json();
+}
+async function poll() {
+  try {
+    const s = await api(`/api/state?events=${eventCount}`);
+    if (s.events.length) { events.push(...s.events); eventCount = s.eventCount; renderLog(); }
+    if (s.eventCount < eventCount) { events = []; eventCount = 0; }  // Reset happened.
+    if (s.version !== S.version) { S = s; render(); }
+  } catch (e) { /* server restarting */ }
+  setTimeout(poll, S.busy ? 400 : 1500);
+}
+async function send(text) {
+  if (!text.trim() || S.busy) return;
+  $("input").value = "";
+  S.busy = true; S.messages = [...(S.messages || []), { role: "user", text }]; renderChat();
+  await api("/api/chat", { text });
+}
+$("form").onsubmit = (e) => { e.preventDefault(); send($("input").value); };
+$("input").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("input").value); } };
+$("reset").onclick = async () => { await api("/api/reset", {}); events = []; eventCount = 0; selected = null; mapView = "Strip"; S.version = -1; $("log").innerHTML = ""; };
+
+// ---------- chat ----------
+function renderChat() {
+  const c = $("chat");
+  c.innerHTML = (S.messages || []).map((m) => `<div class="msg ${m.role}">${m.role === "agent" ? md(m.text) : esc(m.text)}</div>`).join("")
+    + (S.busy ? `<div class="thinking"><span class="dot"></span>${esc(currentStep())}</div>` : "");
+  c.scrollTop = c.scrollHeight;
+  $("send").disabled = !!S.busy;
+  renderChips();
+}
+function currentStep() {
+  const last = [...events].reverse().find((e) => e.kind === "tool");
+  const names = { find_sessions: "Searching the graph", related_sessions: "Following shared topics", other_times: "Checking other runs", plan_agenda: "Scheduling and checking travel" };
+  return last ? (names[last.name] || last.name) + "…" : "Thinking…";
+}
+function renderChips() {
+  const a = S.agenda, hands = a && a.items.find((s) => s.kind === "hands-on");
+  const chips = [{ label: "Demo: plan my Tuesday afternoon", text: DEMO_GOAL }];
+  if (hands) chips.push({ label: `Curveball: meeting at ${ampm(hands.start)}`, text: `I just got a customer meeting at ${ampm(hands.start)} for an hour. Keep a hands-on session if you can.` });
+  else chips.push({ label: "Curveball: meeting during the hands-on session", text: null });
+  $("chips").innerHTML = chips.map((c, i) => `<button class="chip" data-i="${i}" ${!c.text || S.busy ? "disabled" : ""}>${esc(c.label)}</button>`).join("");
+  $("chips").querySelectorAll("button").forEach((b) => (b.onclick = () => send(chips[b.dataset.i].text)));
+}
+
+// ---------- tool log ----------
+function renderLog() {
+  const log = $("log");
+  const shown = [];  // Collapse runs of the same statement (the scheduler looks up many sessions) into one line.
+  for (const e of events) {
+    const last = shown[shown.length - 1];
+    if (e.kind === "cypher" && last && last.kind === "cypher" && last.cypher === e.cypher) { last.times++; last.ms += e.ms; last.rows += e.rows; }
+    else if (e.kind !== "tool-done") shown.push({ ...e, times: 1 });
+  }
+  log.innerHTML = shown.map((e) => {
+    if (e.kind === "tool") return `<div class="tool">▸ <b>${esc(e.name)}</b>(${esc(argSummary(e.args))})</div>`;
+    if (e.kind === "cypher") return `<div class="cy" title="click to expand">${e.times > 1 ? `<b style="color:var(--text)">×${e.times}</b> ` : ""}${esc(e.cypher)}  — ${e.rows} rows, ${Math.round(e.ms * 10) / 10} ms</div>`;
+    if (e.kind === "rejected") return `<div class="rej">✗ ${esc(e.problems.join(" "))}</div>`;
+    if (e.kind === "saved") return `<div class="ok">✓ agenda saved: ${esc(e.codes.join(", "))}</div>`;
+    if (e.kind === "tool-done") return "";
+    return "";
+  }).join("");
+  log.querySelectorAll(".cy").forEach((d) => (d.onclick = () => d.classList.toggle("open")));
+  log.scrollTop = log.scrollHeight;
+  if (S.busy) renderChat();
+}
+function argSummary(a) {
+  return Object.entries(a || {}).filter(([, v]) => v !== "" && v != null && !(Array.isArray(v) && !v.length))
+    .map(([k, v]) => `${k}=${typeof v === "string" ? JSON.stringify(v) : JSON.stringify(v).slice(0, 90)}`).join(", ");
+}
+
+// ---------- agenda ----------
+function render() {
+  renderChat();
+  renderAgenda();
+  renderMap();
+  if (selected && !(S.agenda?.items || []).concat(S.agenda?.passedOver || []).some((s) => s.code === selected)) selected = null;
+  if (!selected) $("whyBody").innerHTML = `<div class="hint">Click a session to see how it connects to your goal and the rest of your day.</div>`;
+}
+function renderAgenda() {
+  const a = S.agenda, tl = $("timeline");
+  if (!a) {
+    tl.innerHTML = `<div id="empty">Your agenda appears here.</div>`; $("agendaHead").innerHTML = ""; $("passed").innerHTML = ""; $("agendaTag").textContent = "";
+    return;
+  }
+  const day = new Date(a.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  $("agendaTag").textContent = `${day}, ${ampm(a.window[0])}–${ampm(a.window[1])}`;
+  $("agendaHead").innerHTML = `<b>Goal:</b> ${esc(a.goal)}`;
+  const items = a.items, ch = a.changes || {};
+  const removed = ((S.previous && S.previous.items) || []).filter((s) => (ch.removed || []).includes(s.code) || (ch.moved || []).some((m) => m.from === s.code));
+  const all = items.concat(a.blocked.map((b) => ({ start: b.start, end: b.end }))).concat(removed);
+  const lo = Math.min(mins(a.window[0]), ...all.map((s) => mins(s.start)));
+  const hi = Math.max(mins(a.window[1]), ...all.map((s) => mins(s.end)));
+  const H = tl.clientHeight || 520, px = H / (hi - lo), y = (t) => (mins(t) - lo) * px;
+  let html = "";
+  for (let m = Math.ceil(lo / 60) * 60; m <= hi; m += 60) html += `<div class="hour" style="top:${(m - lo) * px}px"><span>${ampm(hhmm(m))}</span></div>`;
+  for (const b of a.blocked) html += `<div class="block" style="top:${y(b.start)}px;height:${(mins(b.end) - mins(b.start)) * px}px">${esc(b.label || "Blocked")} · ${ampm(b.start)}–${ampm(b.end)}</div>`;
+  for (const s of removed) html += `<div class="ghost" style="top:${y(s.start)}px;height:${(mins(s.end) - mins(s.start)) * px}px">${esc(s.code)} removed</div>`;
+  const isNew = (c) => (ch.added || []).includes(c) || (ch.moved || []).some((m) => m.to === c);
+  const agendaKey = items.map((s) => s.code).join();
+  const animate = agendaKey !== lastAgendaKey; lastAgendaKey = agendaKey;
+  for (const s of items) {
+    const h = (mins(s.end) - mins(s.start)) * px;
+    const fresh = isNew(s.code) && S.previous;
+    html += `<div class="card ${s.kind} ${selected === s.code ? "sel" : ""} ${fresh && animate ? "new" : ""}" data-code="${esc(s.code)}" style="top:${y(s.start)}px;height:${h - 2}px">
+      <div class="t"><span class="badge ${s.kind}">${s.kind === "hands-on" ? "HANDS-ON" : s.kind === "talk" ? "TALK" : "EVENT"}</span>${fresh ? `<span class="badge new">NEW</span>` : (ch.kept || []).includes(s.code) && S.previous ? `<span class="badge kept">KEPT</span>` : ""}${s.fromScheduler ? `<span class="badge kept" title="The scheduler found this one itself">SCHEDULER PICK</span>` : ""}${s.code.startsWith("NEO") ? `<span class="badge booth" title="${s.format === "Booth theater" ? "Neo4j booth theater, booth 732 (draft schedule)" : "A Neo4j event, not in the AWS catalog"}">${s.format === "Booth theater" ? "NEO4J BOOTH" : "NEO4J EVENT"}</span>` : ""}${esc(s.code)} · ${esc(s.title)}${h < 60 ? ` <span class="m">· ${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)}</span>` : ""}</div>
+      ${h < 60 ? "" : `<div class="m">${ampm(s.start)}–${ampm(s.end)} · ${esc(s.venue)} · ${esc(roomShort(s.room))}</div>`}
+      ${h > 95 ? `<div class="w">${esc(s.why)}</div>` : ""}
+    </div>`;
+  }
+  for (const l of a.legs) {
+    const from = items.find((s) => s.code === l.from), to = items.find((s) => s.code === l.to);
+    if (!from || !to || l.gap <= 0) continue;
+    const top = y(from.end), h = (mins(to.start) - mins(from.end)) * px;
+    const same = l.fromVenue === l.toVenue;
+    html += `<div class="leg ${l.minutes >= l.gap ? "tight" : ""}" style="top:${top + 2}px;height:${h - 4}px"><i style="height:${Math.max(h - 6, 4)}px"></i>${same ? `Stay at ${esc(l.toVenue)}` : `${esc(l.fromVenue)} → ${esc(l.toVenue)}`} · ~${l.minutes} min travel, ${l.gap} min free</div>`;
+  }
+  tl.innerHTML = html;
+  tl.classList.toggle("ghosts", removed.length > 0);
+  tl.querySelectorAll(".card").forEach((c) => (c.onclick = () => select(c.dataset.code)));
+  $("passed").innerHTML = a.passedOver.length ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">Considered, not chosen</div>` + a.passedOver.map((p) =>
+    `<div class="p" data-code="${esc(p.code)}"><b>${esc(p.code)} · ${esc(p.title)}</b><br>${ampm(p.start)} · ${esc(p.venue)} — <span class="r">${esc(p.reason)}</span></div>`).join("") : "";
+  $("passed").querySelectorAll(".p").forEach((c) => (c.onclick = () => select(c.dataset.code)));
+}
+function roomShort(room) { return (room || "").split("|").slice(1).map((x) => x.trim()).filter(Boolean).slice(-2).join(" · "); }
+
+// ---------- map ----------
+async function renderMap() {
+  if (!venues) venues = await api("/api/venues");
+  const a = S.agenda, tabs = ["Strip"];
+  for (const s of a?.items || []) if (!tabs.includes(s.venue) && venues.venues.some((v) => v.name === s.venue)) tabs.push(s.venue);
+  if (!tabs.includes("Venetian")) tabs.push("Venetian");
+  if (!tabs.includes(mapView)) mapView = "Strip";
+  $("mapTabs").innerHTML = tabs.map((t) => `<button class="${t === mapView ? "on" : ""}">${t === "Strip" ? "The Strip" : esc(t) + " inside"}</button>`).join("");
+  $("mapTabs").querySelectorAll("button").forEach((b, i) => (b.onclick = () => { mapView = tabs[i]; renderMap(); }));
+  if (mapView === "Strip") drawStrip(); else drawVenue(mapView);
+}
+function drawStrip() {
+  const W = 460, H = 420, pad = 34;
+  // Project lat/lon into the box, north up. The Strip runs south-southwest to north-northeast.
+  const bounds = { latMin: 36.0885, latMax: 36.1300, lonMin: -115.1880, lonMax: -115.1600 };
+  const k = (H - 2 * pad) / (bounds.latMax - bounds.latMin);
+  // Stylized: east-west is stretched so the venues along the Strip don't crowd each other.
+  const P = (lat, lon) => [pad + 20 + (lon - bounds.lonMin) * Math.cos(36.11 * Math.PI / 180) * k * 1.9, H - pad - (lat - bounds.latMin) * k];
+  const blvd = [[36.0880, -115.1757], [36.1023, -115.1727], [36.1160, -115.1722], [36.1236, -115.1700], [36.1300, -115.1650]].map(([la, lo]) => P(la, lo));
+  const i15 = [[36.0880, -115.1850], [36.1300, -115.1805]].map(([la, lo]) => P(la, lo));
+  const cross = [["Tropicana Ave", 36.1023], ["Flamingo Rd", 36.1160], ["Spring Mountain / Sands Ave", 36.1236]];
+  const items = S.agenda?.items || [], passed = S.agenda?.passedOver || [];
+  const V = Object.fromEntries(venues.venues.map((v) => [v.name, P(v.lat, v.lon)]));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Stylized map of the Las Vegas Strip with conference venues">`;
+  svg += `<defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker></defs>`;
+  svg += `<polyline points="${i15.map((p) => p.join(",")).join(" ")}" fill="none" stroke="var(--road)" stroke-width="5" stroke-dasharray="2 6" stroke-linecap="round"/>`;
+  svg += `<text x="${i15[1][0] - 4}" y="${i15[1][1] + 14}" fill="var(--muted)" font-size="10" text-anchor="end">I-15</text>`;
+  for (const [name, lat] of cross) { const [x1, yy] = P(lat, -115.1880), [x2] = P(lat, -115.1610); svg += `<line x1="${x1}" y1="${yy}" x2="${x2}" y2="${yy}" stroke="var(--road)" stroke-width="2"/><text x="${x1}" y="${yy - 4}" fill="var(--muted)" font-size="10">${name}</text>`; }
+  svg += `<polyline points="${blvd.map((p) => p.join(",")).join(" ")}" fill="none" stroke="#3b4b74" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>`;
+  svg += `<text transform="translate(${(blvd[0][0] + blvd[1][0]) / 2 - 8},${(blvd[0][1] + blvd[1][1]) / 2}) rotate(-80)" fill="var(--muted)" font-size="10" text-anchor="middle">Las Vegas Blvd (the Strip)</text>`;
+  // Route between agenda stops.
+  for (let i = 1; i < items.length; i++) {
+    const [x1, y1] = V[items[i - 1].venue] || [], [x2, y2] = V[items[i].venue] || [];
+    if (x1 == null || x2 == null || items[i - 1].venue === items[i].venue) continue;
+    const mx = (x1 + x2) / 2 + (y2 - y1) * 0.25, my = (y1 + y2) / 2 - (x2 - x1) * 0.25;
+    const leg = S.agenda.legs[i - 1];
+    svg += `<path d="M${x1},${y1} Q${mx},${my} ${x2},${y2}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arr)"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="1s" repeatCount="indefinite"/></path>`;
+    // Label the curve at its midpoint, pushed out to the east, clear of the venue names on the Strip.
+    const lx = (x1 + 2 * mx + x2) / 4, ly = (y1 + 2 * my + y2) / 4;
+    svg += `<text x="${Math.max(lx, x1, x2) + 24}" y="${ly + 4}" fill="var(--accent)" font-size="12" font-weight="700" stroke="var(--panel)" stroke-width="4" paint-order="stroke">~${leg?.minutes ?? "?"} min</text>`;
+  }
+  for (const v of venues.venues) {
+    const [x, y] = V[v.name], stops = items.map((s, i) => (s.venue === v.name ? i + 1 : 0)).filter(Boolean);
+    const isPassed = passed.some((p) => p.venue === v.name) && !stops.length;
+    const r = stops.length ? 15 : 7;
+    svg += `<g style="cursor:pointer" data-v="${esc(v.name)}"><circle cx="${x}" cy="${y}" r="${r}" fill="${stops.length ? "var(--accent)" : isPassed ? "transparent" : "var(--pin)"}" stroke="${isPassed ? "var(--muted)" : "none"}" stroke-dasharray="3 2" stroke-width="2"/>`;
+    if (stops.length) svg += `<text x="${x}" y="${y + 5}" fill="#062421" font-size="13" font-weight="800" text-anchor="middle">${stops.join(",")}</text>`;
+    const left = ["Caesars Palace", "Allegiant Stadium", "The Cosmopolitan"].includes(v.name);
+    // Where to find Neo4j: the booth and the evening reception, always on the map. Venues labelled on the
+    // right get the marker on the same line; those on the left (more room below) on the line under.
+    const neo = NEO4J_PLACES.find((n) => n.venue === v.name);
+    const inline = neo && !left ? `<tspan fill="var(--ok)" font-size="11" font-weight="700">  ● ${esc(neo.label)}</tspan>` : "";
+    svg += `<text x="${x + (left ? -r - 6 : r + 6)}" y="${y + 4}" fill="${stops.length ? "#fff" : "var(--text)"}" font-size="13" font-weight="${stops.length ? 700 : 500}" text-anchor="${left ? "end" : "start"}">${esc(v.name)}${inline}</text>`;
+    if (neo && left) svg += `<text x="${x - r - 6}" y="${y + 18}" fill="var(--ok)" font-size="11" font-weight="700" text-anchor="end">● ${esc(neo.label)}</text>`;
+    svg += `</g>`;
+  }
+  svg += `<text x="${W - 8}" y="${H - 8}" fill="var(--muted)" font-size="10" text-anchor="end">N ↑ · stylized, not to scale</text></svg>`;
+  $("map").innerHTML = svg;
+  $("map").querySelectorAll("g[data-v]").forEach((g) => (g.onclick = () => { if (g.dataset.v !== "Allegiant Stadium") { mapView = g.dataset.v; renderMap(); } }));
+  $("mapTag").textContent = items.length ? `${items.length} stop${items.length > 1 ? "s" : ""}` : "";
+  $("mapNote").textContent = "Travel minutes are planning estimates stored as TRAVEL edges in the graph, not official AWS guidance.";
+}
+const roomCache = {};
+// Where to find Neo4j, marked on the Strip map.
+const NEO4J_PLACES = [
+  { venue: "Venetian", label: "Neo4j booth 732" },
+  { venue: "The Cosmopolitan", label: "Neo4j After Dark · Tue 7–10 pm" },
+];
+// Where to find us. Set the booth number before the show.
+const BOOTH = { venue: "Venetian", area: "Hall B", label: "Neo4j · Booth 732" };
+async function drawVenue(name) {
+  const rows = roomCache[name] || (roomCache[name] = await api(`/api/rooms?venue=${encodeURIComponent(name)}`));
+  const date = S.agenda?.date;
+  // Build Level → area → room from the catalog's room strings ("Venetian | Level 2 | Hall B | Expo | Builder Theater").
+  const tree = {};
+  for (const r of rows) {
+    const parts = r.room.split("|").map((x) => x.trim()).slice(1);
+    const lvl = parts.find((p) => /^Level/.test(p)) || "Rooms";
+    const rest = parts.filter((p) => p !== lvl);
+    const area = rest[0] || "General", room = rest[rest.length - 1] || area;  // The full name is in the tooltip.
+    tree[lvl] ??= {}; tree[lvl][area] ??= {};
+    const cell = (tree[lvl][area][room] ??= { total: 0, today: 0, full: r.room });
+    cell.total += r.sessions; if (r.date === date) cell.today += r.sessions;
+  }
+  const here = new Set((S.agenda?.items || []).filter((s) => s.venue === name).map((s) => s.room));
+  const levels = Object.keys(tree).sort().reverse();
+  // Each level gets height by how many rooms it has, so a busy expo level isn't squeezed.
+  const roomsIn = (lvl) => Object.values(tree[lvl]).reduce((n, a) => n + Object.keys(a).length, 0);
+  const weight = (lvl) => 1.6 + Math.sqrt(roomsIn(lvl)), totalWeight = levels.reduce((n, l) => n + weight(l), 0);
+  const W = 460, H = 420;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Schematic of rooms at ${esc(name)}">`;
+  let levelTop = 6;
+  levels.forEach((lvl) => {
+    const lh = (H - 30) * weight(lvl) / totalWeight, y0 = levelTop, areas = Object.keys(tree[lvl]);
+    levelTop += lh;
+    svg += `<rect x="4" y="${y0}" width="${W - 8}" height="${lh - 8}" rx="10" fill="var(--panel2)" stroke="var(--line)"/>`;
+    svg += `<text x="14" y="${y0 + 17}" fill="var(--muted)" font-size="11" font-weight="700" letter-spacing="1">${esc(lvl.toUpperCase())}</text>`;
+    const weights = areas.map((a) => Math.max(1, Object.keys(tree[lvl][a]).length)), total = weights.reduce((x, y) => x + y, 0);
+    let x = 12;
+    areas.forEach((area, ai) => {
+      const w = (W - 24 - (areas.length - 1) * 6) * weights[ai] / total, ay = y0 + 24, ah = lh - 40;
+      svg += `<rect x="${x}" y="${ay}" width="${w}" height="${ah}" rx="7" fill="var(--bg)" stroke="var(--line)"/>`;
+      svg += `<text x="${x + 6}" y="${ay + 13}" fill="var(--text)" font-size="11" font-weight="600">${esc(area.length > w / 6 ? area.slice(0, Math.max(3, w / 6.5)) + "…" : area)}</text>`;
+      const rooms = Object.entries(tree[lvl][area]), cols = Math.max(1, Math.floor(w / 72)), rh = Math.min(30, (ah - 20) / Math.ceil(rooms.length / cols) - 4);
+      if (BOOTH.venue === name && BOOTH.area === area) {  // The booth marker, top right of its hall.
+        svg += `<g><title>${esc(BOOTH.label)}</title><circle cx="${x + w - 12}" cy="${ay + 9}" r="7" fill="var(--ok)"/><text x="${x + w - 22}" y="${ay + 13}" fill="var(--ok)" font-size="11" font-weight="700" text-anchor="end">${esc(BOOTH.label)}</text></g>`;
+      }
+      rooms.forEach(([room, cell], ri) => {
+        const cw = (w - 8 - (cols - 1) * 4) / cols, rx = x + 4 + (ri % cols) * (cw + 4), ry = ay + 18 + Math.floor(ri / cols) * (rh + 4);
+        const on = here.has(cell.full), busy = cell.today > 0;
+        svg += `<g><title>${esc(cell.full)}: ${cell.today} sessions that day, ${cell.total} all week</title><rect x="${rx}" y="${ry}" width="${cw}" height="${rh}" rx="4" fill="${on ? "var(--accent)" : busy ? "rgba(169,139,255,.22)" : "var(--panel)"}" stroke="${on ? "#fff" : "var(--line)"}"/>`;
+        if (rh > 12) svg += `<text x="${rx + 4}" y="${ry + rh / 2 + 4}" fill="${on ? "#062421" : "var(--text)"}" font-size="10" font-weight="${on ? 800 : 400}">${esc(room.length > cw / 5.6 ? room.slice(0, Math.max(2, cw / 5.8)) + "…" : room)}</text>`;
+        svg += `</g>`;
+      });
+      x += w + 6;
+    });
+  });
+  svg += `<text x="${W - 8}" y="${H - 8}" fill="var(--muted)" font-size="10" text-anchor="end">Schematic from the catalog's room names · not a floor plan</text></svg>`;
+  $("map").innerHTML = svg;
+  $("mapTag").textContent = name;
+  $("mapNote").textContent = here.size ? "Your session rooms are highlighted. Shaded rooms have sessions that day; hover a room for counts."
+    : "Shaded rooms have sessions on your agenda's day; hover a room for counts.";
+}
+
+// ---------- why panel ----------
+async function select(code) {
+  selected = code; renderAgenda();
+  const s = (S.agenda.items || []).find((x) => x.code === code), p = (S.agenda.passedOver || []).find((x) => x.code === code);
+  const it = s || p;
+  if (it && venues.venues.some((v) => v.name === it.venue)) { mapView = it.venue; renderMap(); }
+  const g = await api(`/api/why?code=${encodeURIComponent(code)}`);
+  const sentence = s ? s.why : p ? `Passed over: ${p.reason}` : "";
+  $("whyBody").innerHTML = `<div class="ttl">${esc(code)} · ${esc(it?.title || g.title)}</div><div class="sent">${esc(sentence)}</div>
+    <div style="font-size:12px;color:var(--muted)">${esc((it?.speakers || []).join(", "))} · ${it?.link ? `<a href="${esc(it.link)}" target="_blank" rel="noopener">${it.link.includes("awsevents.com") ? "catalog" : "event page"}</a>` : "Neo4j booth 732 · not in the AWS catalog"}</div>
+    <div id="whyGraph">${whySvg(g)}</div>`;
+}
+function whySvg(g) {
+  if (!g || !g.code) return "";
+  // Hand-placed layout: the session in the middle, its topics and services in two columns, agenda sessions
+  // it connects to along the top, its venue and other runs along the bottom.
+  const W = 460, H = 232, cx = W / 2, cy = 112;
+  const things = g.things.slice(0, 8), paired = g.paired.slice(0, 2), repeats = g.repeats.slice(0, 2);
+  const nodes = [], edges = [], add = (n) => (nodes.push(n), n);
+  const center = add({ x: cx, y: cy, label: g.code, kind: "session", r: 30 });
+  const left = things.filter((_, i) => i % 2 === 0), right = things.filter((_, i) => i % 2 === 1);
+  for (const [col, x] of [[left, 150], [right, 310]]) col.forEach((t, i) => {
+    const y = col.length === 1 ? cy : 52 + i * (120 / Math.max(col.length - 1, 1));
+    edges.push([center, add({ x, y, label: t.name, kind: t.type, r: 6, side: x < cx ? "l" : "r" }), ""]);
+  });
+  paired.forEach((p, i) => {
+    const n = add({ x: cx + (i - (paired.length - 1) / 2) * 120, y: 28, label: p.code, kind: "paired", r: 27 });
+    const via = nodes.find((m) => m.label === p.via);
+    edges.push([n, via || center, "shares"]);
+  });
+  const venue = add({ x: cx, y: H - 34, label: g.venue, kind: "venue", r: 6, side: "r" }); edges.push([center, venue, ""]);
+  repeats.forEach((r, i) => edges.push([center, add({ x: i ? 380 : 80, y: H - 34, label: `${r.code} ${r.time.split(",")[0]}`, kind: "repeat", r: 6, side: i ? "r" : "l" }), ""]));
+  const col = { session: "var(--accent)", Topic: "var(--talk)", Service: "var(--handson)", venue: "var(--pin)", paired: "var(--ok)", repeat: "var(--muted)" };
+  let svg = `<svg viewBox="0 0 ${W} ${H}">`;
+  for (const [a, b, t] of edges) svg += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${t ? "var(--ok)" : "var(--line)"}" stroke-width="${t ? 2.5 : 1.5}"/>`;
+  for (const n of nodes) {
+    svg += `<circle cx="${n.x}" cy="${n.y}" r="${n.r}" fill="${col[n.kind]}"/>`;
+    if (n.kind === "session" || n.kind === "paired") {
+      svg += `<text x="${n.x}" y="${n.y + 4}" font-size="${n.kind === "session" ? 11 : 9.5}" font-weight="800" fill="#062421" text-anchor="middle">${esc(n.label)}</text>`;
+    } else {
+      const lbl = n.label.length > 22 ? n.label.slice(0, 21) + "…" : n.label;
+      svg += `<text x="${n.x + (n.side === "l" ? -9 : 9)}" y="${n.y + 4}" font-size="11" fill="${n.kind === "repeat" ? "var(--muted)" : "var(--text)"}" text-anchor="${n.side === "l" ? "end" : "start"}">${esc(lbl)}</text>`;
+    }
+  }
+  svg += `<g font-size="10" fill="var(--muted)"><circle cx="8" cy="${H - 8}" r="4" fill="var(--talk)"/><text x="16" y="${H - 4}">topic</text><circle cx="56" cy="${H - 8}" r="4" fill="var(--handson)"/><text x="64" y="${H - 4}">AWS service</text><circle cx="138" cy="${H - 8}" r="4" fill="var(--ok)"/><text x="146" y="${H - 4}">on your agenda</text><circle cx="234" cy="${H - 8}" r="4" fill="var(--muted)"/><text x="242" y="${H - 4}">same session, another time</text></g>`;
+  return svg + `</svg>`;
+}
+
+poll();
+window.addEventListener("resize", () => { renderAgenda(); });
+</script>
+</body>
+</html>

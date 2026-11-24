@@ -1,0 +1,102 @@
+# re:Invent 2026 planner: Strands Agents + Neo4j Relate
+
+## Quick start
+
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`) and an OpenAI API key.
+
+```sh
+export OPENAI_API_KEY=sk-...
+uv run planner.py
+```
+
+Open **http://localhost:8026** and click **Demo: plan my Tuesday afternoon**, then **Curveball**.
+
+That's it: the graph (`reinvent-2026.rl`) is already in the repo, and uv installs everything else on first run. For the command-line guide instead:
+
+```sh
+uv run reinvent-relate-agent.py "Which MCP talks are at the Venetian on Wednesday?"
+```
+
+## What this is
+
+A demo for **Build an Expert Agent with AWS Strands Agents and Neo4j Relate**. A [Strands](https://strandsagents.com/) agent plans an attendee's re:Invent day from a [Relate](https://relatedb.ai/) graph of the catalog. Relate is an embedded graph database, so the whole graph, with its vector and full-text indexes, is one file, `reinvent-2026.rl`, opened inside the app.
+
+| File | What it is |
+|---|---|
+| `planner.py` | The booth demo: planner agent, schedule checker, and web page at http://localhost:8026 |
+| `reinvent-relate-agent.py` | The command-line guide: ask questions about sessions, speakers, and schedule |
+| `reinvent_graph.py` | The shared graph: the one-time build, hybrid search, and the read-only graph |
+| `web/index.html` | The page: chat, tool and Cypher log, agenda timeline, Strip map, venue schematics, "why this session" graph |
+| `test_demo.py` | Runs the two booth turns through the agent and checks the agenda it saves |
+| `test_goals.py` | Runs unscripted visitor requests (including past regressions) and checks each saved agenda |
+| `browser_check.py` | Drives the booth demo in headless Chrome and saves screenshots, to check the page by eye |
+| `CLAUDE.md` | Notes for picking up the work: design decisions, lessons learned, how to verify, and open items |
+| `neo4j-events.json` | Other Neo4j events, in the catalog's shape: Neo4j After Dark (Tue 1 Dec, 7–10 pm, The Barbershop at The Cosmopolitan). The build adds them to the graph. |
+| `booth-theater.csv` | The Neo4j booth theater talks (booth 732, Venetian Expo Hall B), from the draft booth schedule. The build adds them to the graph. |
+
+## Run
+
+You need [uv](https://docs.astral.sh/uv/) and an OpenAI API key. The scripts use the `relate-db` 1.2.0 Python package, which uv installs. The [`relate` CLI](https://relatedb.ai/) is optional: the build uses it to compact the file (without it, the file is larger), and you can query the graph with it, as in `relate -d reinvent-2026.rl --read-only "MATCH (v:Venue) RETURN v.name"`.
+
+```sh
+export OPENAI_API_KEY=sk-...
+uv run planner.py build      # 10-30 s: fetch the catalog, add the Neo4j talks and events, embed ~2,670 sessions, write reinvent-2026.rl
+uv run planner.py            # open http://localhost:8026 (set PORT for another port)
+uv run reinvent-relate-agent.py "Which MCP talks are at the Venetian on Wednesday?"
+uv run test_demo.py          # the two booth turns, checked
+uv run test_goals.py         # unscripted visitor requests, checked (a few minutes)
+uv run browser_check.py      # with the planner running: screenshots of the demo in ./screenshots
+```
+
+`reinvent-2026.rl` is committed, so you only need the build to pick up catalog changes or edits to the Neo4j files. Set `OPENAI_MODEL` to use a different chat model (default `gpt-5.4-mini`). Click **New visitor** to start over between visitors.
+
+## The booth demo (90 seconds)
+
+1. Click **Demo: plan my Tuesday afternoon**. The request is *"I'm building a production GenAI agent. I know RAG, but I want to learn tool permissions and evaluation. I only have Tuesday afternoon. Give me one hands-on session and one architecture talk."* It typically plans:
+   - **COM317-R** *Ship Reliable AI Agents with Strands Evaluation and AgentCore Evaluations* (13:00, Wynn)
+   - **SEC407-R** *Constrain AI agents with permissions boundaries and Cedar in AgentCore* (15:30, Wynn)
+
+   "Considered, not chosen" shows the sessions it passed over, with the scheduler's real conflict for each (overlap, or not enough travel time).
+2. Click a session. The map switches to that venue's rooms, and **Why this session** draws its graph path: its topics and services, the agenda session they connect it to, and its other runs.
+3. Click **Curveball: meeting at …**. The button aims the meeting at the hands-on session, so the replan always has something to fix. Typically:
+   - COM317-R is **KEPT**.
+   - SEC407-R is **removed**.
+   - **OPN309** *Defense in depth for Strands AI agents with Cedar, AgentCore, and Rex* (14:30, Caesars Forum) comes in as **NEW**, with ~30 min to travel from Wynn and 30 min free.
+
+The agent's choices can vary from run to run. `test_demo.py` checks what must hold every time: no overlaps, enough travel time, the meeting respected, a hands-on session and a talk, and every session that still fits kept.
+
+## How it works
+
+- **Strands** turns the goal into subjects, a day, a window, and slots ("hands-on: tool permissions", "talk: evaluation"). It searches for candidates for each slot and writes a one-line why for each.
+- **Relate** answers every question from the graph:
+  - **Hybrid search** is one Cypher statement that fuses two ranked lists by reciprocal rank. The vector `SEARCH` filters by day, venue, start time, and kind inside the index. The full-text `SEARCH` catches exact words like "MCP" or "Cedar".
+  - **Graph walks:**
+    - `REPEAT_OF` finds other runs of the same session.
+    - Shared `HAS_TOPIC` and `MENTIONS_SERVICE` neighbors pair sessions.
+    - `TRAVEL` edges between venues give the travel minutes. `venues_by_distance` walks them to answer "far from the Venetian" or "near MGM".
+- **The scheduler** (`plan_agenda`) is plain Python, not the LLM.
+  - **Candidates:** for each slot, it takes the agent's candidates and their other runs that day. It ranks them by a hybrid search for the slot's subject, so the same request plans the same day.
+  - **Choosing:** it tries every combination, rejects overlaps, blocked time, and gaps too short to travel, and always saves the best valid agenda. If none of the agent's picks fit a slot, it leaves the slot empty; it doesn't fill it with something off-subject.
+  - **Replanning:** it keeps sessions that still fit, then moves a session to another run of it, and only then substitutes. It can substitute from its own search when none of the agent's candidates fit around what it keeps. Those cards are badged SCHEDULER PICK, and the agent can reject them (`reject_scheduler_picks`).
+  - **Explaining:** the agent explains the result, and can rewrite the why for a scheduler pick (`explain_pick`). The page shows only what the scheduler saved, so passed-over reasons are real conflicts, not the model's guesses.
+
+### Graph
+
+```
+(:Speaker {name, company})-[:PRESENTS]->(:Session {code, title, abstract, format, kind, level, url})
+(:Session)-[:REPEAT_OF]->(:Series {code, title})            every run of a session
+(:Session)-[:HAS_SLOT]->(:Slot {date, day, start, end, displayTime, room, place})-[:AT_VENUE]->(:Venue)
+(:Session)-[:HAS_TOPIC]->(:Topic)   (:Session)-[:MENTIONS_SERVICE]->(:Service)
+(:Venue {name, lat, lon})-[:TRAVEL {minutes}]->(:Venue)     estimated travel minutes
+(:SessionChunk {text, embedding, date, venue, start, kind})-[:FROM_DOCUMENT]->(:Session)
+```
+
+`kind` is `hands-on`, `talk`, or `other`. Dates are `YYYY-MM-DD` and times `HH:MM` Las Vegas time, stored as strings. `SessionChunk.embedding` is a 1536-dimension FLOAT32 vector (`text-embedding-3-small`) with a vector index that filters by date, venue, start, and kind, and `SessionChunk.text` has a full-text index.
+
+### Caveats
+
+- The catalog comes from a public community mirror (https://ri26.awsclassroom.kr/). The official AWS catalog is the authority.
+- The Neo4j booth theater talks aren't in the AWS catalog. They come from `booth-theater.csv`, a draft schedule: edit it and rerun `uv run planner.py build`. Each title gets a code (NEO01, NEO02...), and its repeats get -R, -R1..., so they link to each other like the catalog's repeats.
+- Other Neo4j events come from `neo4j-events.json`, one object per event in the catalog's shape (code, title, type, abstract, url, speakers, slots). Edit it and rebuild. An event at a venue the map doesn't have also needs that venue in `VENUES` and `TRAVEL_MINUTES` in `reinvent_graph.py`.
+- Travel minutes are planning estimates in `reinvent_graph.py` (`TRAVEL_MINUTES`), not AWS guidance. Edit them and rebuild. The Cosmopolitan isn't an AWS venue: it's on the map for Neo4j After Dark.
+- The Strip map is stylized, and each venue's inside view is a schematic built from the catalog's room names, not a floor plan.
