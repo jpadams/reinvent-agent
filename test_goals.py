@@ -37,6 +37,13 @@ CONVERSATIONS = [
      {"date": "2026-12-01", "codes": ["NEOAD"]}),
     # A question, not a plan: no agenda is required. Expect AIM265-S only.
     (["Which MCP talks are at the Venetian on Wednesday?"], {}),
+    # Regression: naming a session that overlaps one on the agenda used to change nothing, because keeping
+    # the agenda outranked it and a dropped session came back from the saved slots. Expect AIM278-S in.
+    (["Is Jeremy Adams speaking on Tuesday? I'd like to see him and some talks on running agents in production.",
+      "perfect, let's see Jeremy and as many agent talks as fit on Tues",
+      "Let's opt for AIM278-S",
+      "drop IND302-R"],
+     {"date": "2026-12-01", "codes": ["AIM278-S", "NEO04"], "codes_not": ["IND302-R"]}),
 ]
 
 
@@ -73,6 +80,9 @@ def run_one(index: int) -> bool:
         for c in want.get("codes", []):
             if c not in [s["code"] for s in items]:
                 problems.append(f"{c} not on the agenda")
+        for c in want.get("codes_not", []):
+            if c in [s["code"] for s in items]:
+                problems.append(f"{c} is on the agenda")
     print("RESULT:", "OK" if not problems else f"PROBLEMS {problems}")
     return not problems
 
