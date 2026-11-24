@@ -49,10 +49,10 @@ The agent's choices can vary from run to run. `test_demo.py` checks what must ho
     - Shared `HAS_TOPIC` and `MENTIONS_SERVICE` neighbors pair sessions.
     - `TRAVEL` edges between venues give the travel minutes.
 - **The scheduler** (`plan_agenda`) is plain Python, not the LLM.
-  - **Candidates:** for each slot, it takes the agent's candidates, their other runs that day, and the best results of its own hybrid search for the slot's subject. It ranks them by that search, so the same request plans the same day.
-  - **Choosing:** it tries every combination, rejects overlaps, blocked time, and gaps too short to travel, and always saves the best valid agenda. It leaves a slot empty only if nothing fits.
-  - **Replanning:** it keeps sessions that still fit, then moves a session to another run of it, and only then substitutes. Its own finds must fit around the sessions it keeps.
-  - **Explaining:** the agent explains the result, and can rewrite the why for a session the scheduler found (`explain_pick`). The page shows only what the scheduler saved, so passed-over reasons are real conflicts, not the model's guesses.
+  - **Candidates:** for each slot, it takes the agent's candidates and their other runs that day. It ranks them by a hybrid search for the slot's subject, so the same request plans the same day.
+  - **Choosing:** it tries every combination, rejects overlaps, blocked time, and gaps too short to travel, and always saves the best valid agenda. If none of the agent's picks fit a slot, it leaves the slot empty; it doesn't fill it with something off-subject.
+  - **Replanning:** it keeps sessions that still fit, then moves a session to another run of it, and only then substitutes. It can substitute from its own search when none of the agent's candidates fit around what it keeps. Those cards are badged SCHEDULER PICK, and the agent can reject them (`reject_scheduler_picks`).
+  - **Explaining:** the agent explains the result, and can rewrite the why for a scheduler pick (`explain_pick`). The page shows only what the scheduler saved, so passed-over reasons are real conflicts, not the model's guesses.
 
 ### Graph
 

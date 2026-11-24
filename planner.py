@@ -230,29 +230,40 @@ SCHEDULER_PICKS = 10  # How many of its own search results the scheduler adds to
 MAX_OPTIONS = 16      # Candidates per slot it considers, so trying every combination stays fast.
 
 
-def options_for(date, window, slot, goal, blocked, anchors) -> list[dict]:
-    """A slot's candidates, best first: the agent's picks, other runs of them that day, and the best results
-    of the scheduler's own hybrid search for the slot's subject. They're ranked by that search, with the
-    agent's order breaking ties, so the same request plans the same day however the agent orders them.
-    Its own finds must fit around the blocked time and the sessions being kept (anchors)."""
+FALLBACK = 1000  # Rank offset for the scheduler's own finds: they only fill a slot none of the agent's picks fit.
+
+
+def options_for(date, window, slot, goal, blocked, anchors, exclude) -> list[dict]:
+    """A slot's candidates, best first. The agent's picks (and other runs of them that day) come first, ranked
+    by a graph search for the slot's subject with the agent's order breaking ties, so the same request plans
+    the same day however the agent orders them. On a replan, the scheduler's own finds for the slot come
+    after them, as substitutes that fit around the blocked time and the sessions being kept (anchors)."""
     found = rg.find_sessions(graph, embed, slot["label"], [], date, "", slot["kind"], window[0], window[1], 40)
     order = {f["code"]: i for i, f in enumerate(found)}
     given = {c.get("code") for c in slot["candidates"]}
     others = [a for a in anchors if a["slot"] != slot["label"]]
-    extra = [{"code": f["code"], "found": f} for f in found
-             if f["code"] not in given and not check(date, window, others + [f], blocked)][:SCHEDULER_PICKS]
+    # The fallback search: the slot's subject first (the goal can name other slots' subjects), then the goal,
+    # which keeps a vaguely labelled slot on-topic.
+    extra = []
+    if anchors:  # Only on a replan: substitutes that fit around the sessions being kept.
+        by_goal = rg.find_sessions(graph, embed, f"{slot['label']}. {goal}", [], date, "", slot["kind"],
+                                   window[0], window[1], 30)
+        fallback = found + [f for f in by_goal if f["code"] not in order]
+        extra = [{"code": f["code"], "found": f, "rank": FALLBACK + i} for i, f in enumerate(fallback)
+                 if f["code"] not in given | exclude and not check(date, window, others + [f], blocked)][:SCHEDULER_PICKS]
     ranked = []
     for position, c in enumerate(slot["candidates"] + extra):
         s = c.get("found") or lookup(c.get("code", ""))
-        if not s or (slot["kind"] and s["kind"] != slot["kind"]):
+        if not s or s["code"] in exclude or (slot["kind"] and s["kind"] != slot["kind"]):
             continue
-        rank = order.get(s["code"], 40) + position / 100
-        why = c.get("why") or f"Found by the scheduler's graph search for \"{slot['label']}\": {s.get('summary') or s['title']}"
+        rank = c.get("rank", order.get(s["code"], 40) + position / 100)
+        why = c.get("why") or f"From the catalog: {s.get('summary') or s['title']}"
         ranked.append({**s, "why": why, "slot": slot["label"], "rank": rank, "fromScheduler": "found" in c})
         if "found" not in c:
             for r in graph.run(SAME_DAY_REPEATS, code=s["code"], date=date):
-                ranked.append({**r, "why": why, "slot": slot["label"], "rank": rank + 0.5, "repeatOf": s["code"],
-                               "fromScheduler": False})
+                if r["code"] not in exclude:
+                    ranked.append({**r, "why": why, "slot": slot["label"], "rank": rank + 0.5, "repeatOf": s["code"],
+                                   "fromScheduler": False})
     return sorted(ranked, key=lambda s: s["rank"])[:MAX_OPTIONS]
 
 
@@ -276,7 +287,7 @@ def solve(date, window, options, blocked, keep):
 
 @tool
 def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots: list[dict],
-                blocked: list[dict] | None = None) -> str:
+                blocked: list[dict] | None = None, reject_scheduler_picks: list[str] | None = None) -> str:
     """Build the attendee's agenda and put it on their screen. Give one slot per session they want, each with
     candidate sessions in your order of preference. A scheduler adds other runs of them that day and the best
     results of its own graph search, then picks one session per slot so that nothing overlaps, nothing falls
@@ -289,14 +300,18 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
         window_start: Start of the attendee's free time, "HH:MM".
         window_end: End of the attendee's free time, "HH:MM".
         goal: The attendee's learning goal, in one short sentence.
-        slots: One per session wanted, at most 4, e.g. [{"label": "Hands-on: tool permissions", "kind": "hands-on",
+        slots: One per session wanted, at most 4. The label names the slot's subject (the scheduler searches
+            for it), never just "Talk 1". E.g. [{"label": "Hands-on: tool permissions", "kind": "hands-on",
             "candidates": [{"code": "...", "why": "one sentence, grounded in the catalog, on how it advances
             the goal"}, ...]}]. kind is "hands-on", "talk", or "" for either. Give 3 to 8 candidates per slot.
         blocked: Times the attendee can't attend: [{"start": "HH:MM", "end": "HH:MM", "label": "Customer meeting"}].
+        reject_scheduler_picks: Codes of sessions the scheduler picked itself (fromScheduler) that don't serve
+            the goal, so it won't pick them again. Never your own candidates or sessions you want to keep: to
+            drop one of your candidates, leave it out of candidates.
     """
     with ToolCall("plan_agenda", date=date, window=[window_start, window_end],
                   slots=[{"label": sl.get("label"), "candidates": [c.get("code") for c in sl.get("candidates", [])]}
-                         for sl in slots], blocked=blocked):
+                         for sl in slots], blocked=blocked, reject_scheduler_picks=reject_scheduler_picks):
         window = (window_start, window_end)
         blocked = [b for b in blocked or [] if b.get("start") and b.get("end")]
         slots = [{"label": sl.get("label") or f"Session {i + 1}", "kind": sl.get("kind", ""),
@@ -319,7 +334,10 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
         # for the other slots must fit around them, so a replan can keep them.
         anchors = [{**s, "slot": s.get("slot", "")} for s in (previous or {}).get("items", [])
                    if s["code"] in keep and not check(date, window, [s], blocked)]
-        options = [options_for(date, window, sl, goal, blocked, anchors) for sl in slots]
+        # Rejections only ever apply to the scheduler's own finds: never to the agent's candidates or the agenda.
+        own = {c.get("code") for sl in slots for c in sl["candidates"]} | set(keep)
+        excluded = (set(reject_scheduler_picks or []) | set((previous or {}).get("excluded", []))) - own
+        options = [options_for(date, window, sl, goal, blocked, anchors, excluded) for sl in slots]
         best = solve(date, window, options, blocked, keep)
         if not best:
             event("rejected", problems=["Nothing fits that day and window."])
@@ -340,12 +358,16 @@ def plan_agenda(date: str, window_start: str, window_end: str, goal: str, slots:
             diff = changes(previous, best)
             state["previous"] = previous
             state["agenda"] = {"date": date, "window": list(window), "goal": goal, "items": best, "blocked": blocked,
-                               "slots": slots, "unfilled": unfilled, "passedOver": passed, "legs": legs(best),
+                               "slots": slots, "unfilled": unfilled, "excluded": sorted(excluded), "passedOver": passed, "legs": legs(best),
                                "changes": diff}
             state["version"] += 1
         event("saved", codes=[s["code"] for s in best])
+        review = [{"code": s["code"], "title": s["title"], "slot": s["slot"]} for s in best if s.get("fromScheduler")]
         return rg.to_json({
             "saved": True, "unfilledSlots": unfilled, "changes": diff,
+            **({"reviewThese": "The scheduler filled these from its own search because none of your candidates "
+                "fit. For each, call explain_pick if it serves the goal; otherwise call plan_agenda again with it "
+                "in reject_scheduler_picks (and better candidates for its slot).", "schedulerPicks": review} if review else {}),
             "agenda": [{k: s[k] for k in ("code", "title", "time", "venue", "kind", "slot", "fromScheduler")} for s in best],
             "passedOver": [{"code": p["code"], "reason": p["reason"]} for p in passed]})
 
@@ -382,14 +404,19 @@ Estimated travel between venues (same venue: {rg.SAME_VENUE_MINUTES} min):
 How to plan:
 1. Turn the attendee's goal into the subjects to learn, what they already know (skip intro-level material
    on it), the day, their free window, and the sessions they want (e.g. one hands-on and one talk).
-   With two subjects and two sessions, give each session its own subject.
+   With two subjects and two sessions, give each session its own subject. Give each slot different
+   candidates: a session can fill only one slot. If they don't say how many
+   sessions, plan two or three across their window. A short agenda that's on-subject beats filler: if a
+   slot stays empty, say why (e.g. the other matching session conflicts) and offer another day.
 2. For each session wanted, search with find_sessions using that subject, the day, the window, and the
    kind ("hands-on" or "talk"). related_sessions finds sessions that share topics and services, for a
    talk that introduces what a hands-on session practices.
 3. Call plan_agenda with one slot per session wanted, 3 to 8 candidates each in your order of preference,
    each with a "why" grounded in its title or description. The scheduler adds its own graph-search finds,
    picks a combination that fits, saves it, and reports what it passed over; don't do the timing yourself.
-   If it picked a session you didn't suggest (fromScheduler), call explain_pick with a better why. If it
+   On a replan, it can substitute its own finds (fromScheduler) when none of yours fit. If one serves the goal, call
+   explain_pick with a better why; if it doesn't, call plan_agenda again with its code in reject_scheduler_picks.
+   explain_pick only writes a why: never use it for notes or to remove a session. If it
    left a slot unfilled, say so.
 Whenever the attendee wants sessions on a day, build the agenda with plan_agenda, even for a quick list:
 only the scheduler checks overlaps and travel. Don't add blocked time they didn't mention (keynotes
